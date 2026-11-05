@@ -232,27 +232,42 @@ def _owned_by_hermes(proc, registered: set[int]) -> bool:
         return False
 
 
-def reap_processes_rooted_in(scratch_root: Path, doomed: list[Path], audit: logging.Logger = logger) -> int:
-    """TERM (then KILL) same-user processes whose cwd is inside an entry about to be
-    pruned, or is a path under *scratch_root* that no longer exists. Returns the count.
+_REAP_SCAN_BUDGET_SECONDS = 5.0
 
-    Only the cwd is consulted: a process merely holding a file open inside scratch (an
-    editor, a log tail) is not ours to kill, but one *living* in a directory we are
-    about to delete, or in one already gone, has nothing left to run for.
 
-    A process Hermes owns (:func:`_owned_by_hermes`) is never signalled; each doomed entry it
-    works inside is dropped from *doomed* in place and recorded as kept.
+def _reap_scan_budget_seconds() -> float:
+    """Scan budget for :func:`reap_processes_rooted_in`; ``HERMES_SCRATCH_REAP_SCAN_SECONDS``
+    overrides (0 or negative disables the reap entirely)."""
+    raw = os.environ.get("HERMES_SCRATCH_REAP_SCAN_SECONDS", "")
+    if not raw:
+        return _REAP_SCAN_BUDGET_SECONDS
+    try:
+        return float(raw)
+    except ValueError:
+        return _REAP_SCAN_BUDGET_SECONDS
+
+
+def _scan_cwd_rooted(scratch_root: Path, doomed_paths: list[str], out_path: Path) -> None:
+    """The unbounded part of the reap: one ``cwd()`` call per same-user process.
+
+    Writes plain JSON-able data to *out_path*. Runs in its own **process** (see
+    :func:`_scan_cwd_rooted_isolated`), never in the caller's: on macOS a wedged
+    ``proc_pidinfo(PROC_PIDVNODEPATHINFO)`` takes a lock on the proc table that blocks every
+    thread of the calling process, so a thread-level timeout cannot save the caller — only a
+    separate process can be killed.
     """
+    import json as _json
+
     import psutil
 
     root = os.path.realpath(str(scratch_root))
-    targets = [os.path.realpath(str(p)) for p in doomed]
+    targets = [os.path.realpath(p) for p in doomed_paths]
     skip = _own_lineage()
     uid = os.getuid() if hasattr(os, "getuid") else None
-    victims: list[tuple[psutil.Process, str]] = []
+    victims: list[list] = []
     # The pruner's own lineage is never signalled, but its cwd still keeps an entry: a live
     # session that launched this Hermes command may be working inside it.
-    lineage: list[tuple[psutil.Process, str]] = []
+    lineage: list[list] = []
     for proc in psutil.process_iter(["pid"]):
         try:
             if uid is not None and proc.uids().real != uid:
@@ -267,7 +282,89 @@ def reap_processes_rooted_in(scratch_root: Path, doomed: list[Path], audit: logg
         if not _under(cwd_path, root):
             continue
         if deleted or not os.path.exists(cwd_path) or any(_under(cwd_path, t) for t in targets):
-            (lineage if proc.pid in skip else victims).append((proc, cwd_path))
+            (lineage if proc.pid in skip else victims).append([proc.pid, cwd_path])
+    try:
+        out_path.write_text(_json.dumps({"victims": victims, "lineage": lineage}), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _scan_cwd_rooted_isolated(scratch_root: Path, doomed_paths: list[str],
+                             budget: float) -> "dict | None":
+    """Run :func:`_scan_cwd_rooted` in a forked child; kill it when *budget* elapses."""
+    import json as _json
+    import multiprocessing as mp
+
+    if "fork" not in mp.get_all_start_methods():   # Windows: no isolation available, scan inline
+        out = scratch_root.parent / f".reap-scan-{os.getpid()}.json"
+        try:
+            _scan_cwd_rooted(scratch_root, doomed_paths, out)
+            return _json.loads(out.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        finally:
+            with contextlib.suppress(OSError):
+                out.unlink()
+
+    out_path = scratch_root.parent / f".reap-scan-{os.getpid()}-{int(time.time() * 1000)}.json"
+    ctx = mp.get_context("fork")
+    proc = ctx.Process(target=_scan_cwd_rooted, args=(scratch_root, doomed_paths, out_path), daemon=True)
+    proc.start()
+    proc.join(budget)
+    if proc.is_alive():
+        with contextlib.suppress(Exception):
+            proc.kill()
+        proc.join(2.0)
+        with contextlib.suppress(OSError):
+            out_path.unlink()
+        return None
+    try:
+        return _json.loads(out_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    finally:
+        with contextlib.suppress(OSError):
+            out_path.unlink()
+
+
+def reap_processes_rooted_in(scratch_root: Path, doomed: list[Path], audit: logging.Logger = logger) -> int:
+    """TERM (then KILL) same-user processes whose cwd is inside an entry about to be
+    pruned, or is a path under *scratch_root* that no longer exists. Returns the count.
+
+    Only the cwd is consulted: a process merely holding a file open inside scratch (an
+    editor, a log tail) is not ours to kill, but one *living* in a directory we are
+    about to delete, or in one already gone, has nothing left to run for.
+
+    A process Hermes owns (:func:`_owned_by_hermes`) is never signalled; each doomed entry it
+    works inside is dropped from *doomed* in place and recorded as kept.
+
+    The cwd scan runs in a forked child under :func:`_reap_scan_budget_seconds`; a ``cwd()``
+    call that wedges the kernel only wedges that child, which is killed on timeout. Deletion of
+    *doomed* is unaffected — only the reap is skipped for this round.
+    """
+    import psutil
+
+    budget = _reap_scan_budget_seconds()
+    if budget <= 0:
+        audit.info("scratch prune: reap disabled by HERMES_SCRATCH_REAP_SCAN_SECONDS=%r", budget)
+        return 0
+    payload = _scan_cwd_rooted_isolated(scratch_root, [str(p) for p in doomed], budget)
+    if payload is None:
+        audit.info("scratch prune: cwd scan did not finish within %.1fs (a psutil cwd() call is "
+                   "wedged in the kernel); skipping the reap, deletion continues", budget)
+        return 0
+
+    def _live(rows: list) -> list:
+        out = []
+        for pid, cwd_path in rows:
+            try:
+                out.append((psutil.Process(int(pid)), cwd_path))
+            except (psutil.Error, OSError):
+                continue
+        return out
+
+    victims = _live(payload.get("victims") or [])
+    lineage = _live(payload.get("lineage") or [])
     # The owning home comes from the scratch path as configured, not its resolved target:
     # a cache/scratch symlinked onto another disk still belongs to <home>.
     registered = _registered_live_pids(Path(scratch_root).absolute().parent.parent) if victims else set()

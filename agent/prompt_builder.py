@@ -931,8 +931,12 @@ def _local_host_hints() -> list[str]:
     # The model reaches for the system temp dir by reflex (tmpfs on most Linux hosts, fills RAM);
     # naming Hermes' scratch dir here is what makes the TMPDIR export a habit rather than a hidden default.
     try:
-        host_lines.append(f"Scratch directory: {get_scratch_dir()} (TMPDIR points here; write temporary files "
-                          "and probes there, never under the system temp dir; entries idle for 24h are pruned)")
+        # prune=False: naming the directory must not run the idle-entry sweep. That sweep scans
+        # every same-user process's cwd, and a single wedged proc_pidinfo() on macOS freezes the
+        # whole caller — paying that while building a prompt left first turns with no model call,
+        # no heartbeat, and a kanban card reclaimed as stale_lock an hour later.
+        host_lines.append(f"Scratch directory: {get_scratch_dir(prune=False)} (TMPDIR points here; write temporary "
+                          "files and probes there, never under the system temp dir; entries idle for 24h are pruned)")
     except OSError:
         pass
     if not (sys.platform == "win32" and not is_wsl()):
