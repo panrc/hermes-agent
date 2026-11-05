@@ -446,6 +446,66 @@ _PASSWORD_FORM_SCRIPT = """\
 """
 
 
+
+
+
+_LOGIN_ZH_SCRIPT = """<script>
+/* [zh-login] 登录页中文化：仅当浏览器语言是中文（或 ?lang=zh）时生效，登录逻辑不受影响 */
+(function () {
+  var zh = false;
+  try {
+    zh = /^zh/i.test(navigator.language || '') ||
+         (navigator.languages || []).some(function (l) { return /^zh/i.test(l); }) ||
+         /[?&]lang=zh(&|$)/.test(location.search);
+  } catch (e) {}
+  if (!zh) return;
+  var DICT = {
+    'sign in': '登录',
+    'username': '用户名',
+    'password': '密码',
+    'choose a sign-in method to continue to the hermes agent dashboard.':
+      '选择一种登录方式，继续进入 Hermes Agent 控制台。',
+    'public bind · auth required': '公网绑定 · 需要认证',
+    'too many attempts. please wait and try again.': '尝试次数过多，请稍后再试。',
+    'invalid username or password.': '用户名或密码错误。',
+    'sign-in failed. please try again.': '登录失败，请重试。',
+    'network error. please try again.': '网络错误，请重试。',
+    'sign-in unavailable': '暂时无法登录',
+    'username & password': '用户名 & 密码'
+  };
+  function tr(s) {
+    var t = s.trim();
+    if (!t) return s;
+    var k = t.toLowerCase();
+    if (k.indexOf('sign in with ') === 0) {
+      var rest = t.slice('sign in with '.length);
+      return s.replace(t, '用「' + (DICT[rest.toLowerCase()] || rest) + '」登录');
+    }
+    if (DICT[k] === undefined) return s;
+    return s.replace(t, DICT[k]);
+  }
+  function walk(root) {
+    var w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT), n;
+    while ((n = w.nextNode())) {
+      var v = n.nodeValue, nv = tr(v);
+      if (nv !== v) n.nodeValue = nv;
+    }
+  }
+  function apply() {
+    if (document.body) walk(document.body);
+    var t = document.title.trim();
+    if (/^sign in *[—-] *hermes agent$/i.test(t)) document.title = '登录 —— Hermes Agent';
+    if (/^sign-in unavailable/i.test(t)) document.title = '暂时无法登录 —— Hermes Agent';
+    document.documentElement.setAttribute('lang', 'zh-Hans');
+  }
+  apply();
+  new MutationObserver(function () { apply(); }).observe(document.documentElement,
+    { childList: true, subtree: true, characterData: true });
+})();
+</script>
+"""
+
+
 def render_login_html(*, next_path: str = "", prefix: str = "") -> str:
     """Return the full HTML for ``GET /login``.
 
@@ -482,7 +542,9 @@ def render_login_html(*, next_path: str = "", prefix: str = "") -> str:
     # it from the <main> element's data attribute, and rewrite the font
     # URLs to stay inside the mount.  ``str.replace`` after ``str.format``
     # avoids interfering with the CSS ``{{ }}`` doubling in the template.
-    return _apply_proxy_prefix(html_out, prefix)
+    html_out = _apply_proxy_prefix(html_out, prefix)
+    # [zh-login] 中文浏览器 / ?lang=zh 时把登录页文案翻成中文（纯前端，逻辑不变）
+    return html_out.replace("</body>", _LOGIN_ZH_SCRIPT + "</body>", 1)
 
 
 def _apply_proxy_prefix(html_out: str, prefix: str) -> str:

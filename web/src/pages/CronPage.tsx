@@ -56,13 +56,13 @@ import { PluginSlot } from "@/plugins";
 import { LoadErrorNotice } from "@/components/LoadErrorNotice";
 import { Segmented } from "@nous-research/ui/ui/components/segmented";
 import { AutomationBlueprints } from "@/components/AutomationBlueprints";
-import { cn, themedBody } from "@/lib/utils";
+import { cn, themedBody, uiLocale } from "@/lib/utils";
 import { errorMessage } from "@/lib/api-error";
 
 function formatTime(iso?: string | null): string {
   if (!iso) return "—";
   const d = new Date(iso);
-  return d.toLocaleString();
+  return d.toLocaleString(uiLocale());
 }
 
 function asText(value: unknown): string {

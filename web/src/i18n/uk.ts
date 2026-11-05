@@ -79,6 +79,12 @@ export const uk: Translations = {
       plugins: "Плагіни",
       sessions: "Сесії",
       skills: "Навички",
+      files: "Files",
+      channels: "Channels",
+      webhooks: "Webhooks",
+      pairing: "Pairing",
+      mcp: "MCP",
+      system: "System",
     },
     modelToolsSheetSubtitle: "та інструменти",
     modelToolsSheetTitle: "Модель",
@@ -750,6 +756,7 @@ export const uk: Translations = {
       blocked: "Заблоковано",
       done: "Виконано",
       archived: "Архів",
+      review: "Review",
     },
     columnHelp: {
       triage: "Сирі ідеї — специфікатор деталізує специфікацію",
@@ -760,6 +767,7 @@ export const uk: Translations = {
       blocked: "Воркер запитав втручання людини",
       done: "Завершено",
       archived: "Архівовано",
+      review: "Implementation complete — awaiting review",
     },
     confirmDone:
       "Позначити цю задачу як виконану? Захоплення воркера буде звільнено, а залежні нащадки стануть готовими.",
@@ -784,5 +792,6 @@ export const uk: Translations = {
       "шлях робочої області (необов'язково, виводиться з виконавця, якщо порожньо)",
     logTruncated: "(показано останні 100 KB — повний журнал у ",
     logAt: ")",
+    clearFilters: "Clear filters",
   },
 };

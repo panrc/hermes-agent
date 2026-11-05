@@ -10,7 +10,13 @@ dispatcher's write txns); it carries its credential in the query string (browser
 from __future__ import annotations
 
 import asyncio
+import datetime
 import importlib
+import os
+import shutil
+import subprocess
+import threading
+import uuid
 import json
 import logging
 import re
@@ -301,9 +307,13 @@ def get_board(
             workflow_template_id=workflow_template_id, current_step_key=current_step_key)
         # Link / comment / progress rollups are each one aggregate query rather than N per-task lookups.
         link_counts: dict[str, dict[str, int]] = {}
+        link_ids: dict[str, dict[str, list[str]]] = {}
         for row in conn.execute("SELECT parent_id, child_id FROM task_links").fetchall():
             link_counts.setdefault(row["parent_id"], {"parents": 0, "children": 0})["children"] += 1
             link_counts.setdefault(row["child_id"], {"parents": 0, "children": 0})["parents"] += 1
+            # 卡片上直接带上父子 id（App 用来「只显示主任务，展开看子任务」）
+            link_ids.setdefault(row["parent_id"], {"parents": [], "children": []})["children"].append(row["child_id"])
+            link_ids.setdefault(row["child_id"], {"parents": [], "children": []})["parents"].append(row["parent_id"])
         comment_counts: dict[str, int] = {
             r["task_id"]: r["n"] for r in conn.execute("SELECT task_id, COUNT(*) AS n FROM task_comments GROUP BY task_id")}
         progress: dict[str, dict[str, int]] = {}  # per parent: children done / total, rendered as "N/M"
@@ -328,6 +338,7 @@ def get_board(
             d = _task_dict(t, latest_summary=(full[:_CARD_SUMMARY_PREVIEW_CHARS] if full else None),
                            current_run_started_at=run_start_map.get(t.id))
             d["link_counts"] = link_counts.get(t.id, {"parents": 0, "children": 0})
+            d["links"] = link_ids.get(t.id, {"parents": [], "children": []})
             d["comment_count"] = comment_counts.get(t.id, 0)
             d["progress"] = progress.get(t.id)  # None when the task has no children
             _attach_diagnostics(d, diagnostics_per_task.get(t.id))
@@ -398,7 +409,7 @@ def get_task(
         _attach_diagnostics(task_d, _compute_task_diagnostics(conn, task_ids=[task_id]).get(task_id) or [])
         return {
             "task": task_d,
-            "comments": [asdict(c) for c in kanban_db.list_comments(conn, task_id)],
+            "comments": _comments_with_attachments(conn, task_id, board),
             "events": [asdict(e) for e in kanban_db.list_events(conn, task_id)],
             "attachments": [_attachment_dict(a) for a in kanban_db.list_attachments(conn, task_id)],
             "links": links,
@@ -549,6 +560,12 @@ class UpdateTaskBody(BaseModel):
     clear_model_override: bool = False
     reasoning_effort: Optional[str] = None
     clear_reasoning_effort: bool = False
+    # Execution-shape knobs the create endpoint already accepts; PATCH used to ignore them,
+    # which left goal mode / run caps unchangeable after creation (mobile client needs it).
+    goal_mode: Optional[bool] = None
+    goal_max_turns: Optional[int] = None
+    max_runtime_seconds: Optional[int] = None
+    tenant: Optional[str] = None
 
 
 class BulkTaskBody(BaseModel):
@@ -667,6 +684,38 @@ def _open_parent_refusal(conn, task_id: str, s: str) -> Optional[str]:
     return f"cannot move {task_id} to {s!r}: unsatisfied parent dependencies: {detail}; complete the parents first (done or archived)"
 
 
+def _patch_execution_shape(conn, task_id: str, payload: UpdateTaskBody, board: Optional[str]) -> None:
+    """PATCH the execution-shape columns the create endpoint accepts (goal mode / run cap /
+    tenant). No status verb involved, so a plain UPDATE + an ``edited`` event is the whole job."""
+    sets, vals, changed = [], [], []
+    if payload.goal_mode is not None:
+        sets.append("goal_mode = ?")
+        vals.append(1 if payload.goal_mode else 0)
+        changed.append("goal_mode")
+    if payload.goal_max_turns is not None:
+        turns = int(payload.goal_max_turns)
+        sets.append("goal_max_turns = ?")
+        vals.append(turns if turns > 0 else None)
+        changed.append("goal_max_turns")
+    if payload.max_runtime_seconds is not None:
+        cap = int(payload.max_runtime_seconds)
+        sets.append("max_runtime_seconds = ?")
+        vals.append(cap if cap > 0 else None)
+        changed.append("max_runtime_seconds")
+    if payload.tenant is not None:
+        sets.append("tenant = ?")
+        vals.append(payload.tenant or None)
+        changed.append("tenant")
+    if not sets:
+        return
+    with kanban_db.write_txn(conn):
+        conn.execute(f"UPDATE tasks SET {', '.join(sets)} WHERE id = ?", (*vals, task_id))
+        conn.execute(
+            "INSERT INTO task_events (task_id, kind, payload, created_at) VALUES (?, 'edited', ?, ?)",
+            (task_id, json.dumps({"fields": changed}), int(time.time())))
+    kanban_db.notify_task_updated(conn, task_id, changed, board=board)
+
+
 def _patch_title_body(conn, task_id: str, payload: UpdateTaskBody, board: Optional[str]) -> None:
     """PATCH title/body phase: one UPDATE + ``edited`` event, then the post-commit observer
     (field names only — values never leave the DB via this payload)."""
@@ -710,6 +759,7 @@ def update_task(task_id: str, payload: UpdateTaskBody, board: Optional[str] = Qu
             _set_priority(conn, task_id, payload.priority, board)
         if payload.title is not None or payload.body is not None:
             _patch_title_body(conn, task_id, payload, board)
+        _patch_execution_shape(conn, task_id, payload, board)
         updated = kanban_db.get_task(conn, task_id)
         return {"task": _task_dict(
             updated, current_run_started_at=kanban_db.current_run_started_ats(conn, [task_id]).get(task_id)
@@ -797,16 +847,74 @@ def _set_status_direct(conn: sqlite3.Connection, task_id: str, new_status: str) 
 class CommentBody(BaseModel):
     body: str
     author: Optional[str] = "dashboard"
+    # 先把文件 POST 到 /tasks/{id}/attachments 拿到 id，再把 id 带进来，评论气泡里
+    # 就能显示图片/文件。存在旁挂 JSON 里（不改 kanban_db 表结构）。
+    attachment_ids: Optional[list[int]] = None
+
+
+COMMENT_ATTACHMENTS_FILE = Path(os.path.expanduser("~/.hermes/kanban_comment_attachments.json"))
+
+
+def _comment_attachments() -> dict:
+    try:
+        return json.loads(COMMENT_ATTACHMENTS_FILE.read_text("utf-8"))
+    except Exception:
+        return {}
+
+
+def _set_comment_attachments(board: Optional[str], comment_id: int, ids: list[int]) -> None:
+    data = _comment_attachments()
+    key = board or "default"
+    bucket = data.get(key) or {}
+    if ids:
+        bucket[str(comment_id)] = [int(i) for i in ids]
+    else:
+        bucket.pop(str(comment_id), None)
+    data[key] = bucket
+    COMMENT_ATTACHMENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = COMMENT_ATTACHMENTS_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False), "utf-8")
+    tmp.replace(COMMENT_ATTACHMENTS_FILE)
+
+
+def _comments_with_attachments(conn, task_id: str, board: Optional[str]) -> list[dict]:
+    mapping = (_comment_attachments().get(board or "default") or {})
+    by_id = {a.id: a for a in kanban_db.list_attachments(conn, task_id)}
+    out = []
+    for c in kanban_db.list_comments(conn, task_id):
+        row = asdict(c)
+        ids = mapping.get(str(c.id)) or []
+        row["attachments"] = [_attachment_dict(by_id[i]) for i in ids if i in by_id]
+        out.append(row)
+    return out
 
 
 @router.post("/tasks/{task_id}/comments")
 def add_comment(task_id: str, payload: CommentBody, board: Optional[str] = Query(None)):
-    if not payload.body.strip():
+    if not payload.body.strip() and not payload.attachment_ids:
         raise HTTPException(status_code=400, detail="body is required")
     with _board_conn(board) as (board, conn):
         _require_task(conn, task_id)
-        kanban_db.add_comment(conn, task_id, author=payload.author or "dashboard", body=payload.body)
-        return {"ok": True}
+        cid = kanban_db.add_comment(
+            conn, task_id, author=payload.author or "dashboard",
+            body=payload.body.strip() or "（图片/附件）",
+        )
+        if payload.attachment_ids:
+            owned = {a.id for a in kanban_db.list_attachments(conn, task_id)}
+            ids = [i for i in payload.attachment_ids if i in owned]
+            _set_comment_attachments(board, cid, ids)
+        else:
+            ids = []
+        atts = {a.id: a for a in kanban_db.list_attachments(conn, task_id)}
+        return {"ok": True, "id": cid,
+                "attachments": [_attachment_dict(atts[i]) for i in ids if i in atts]}
+
+
+@router.get("/tasks/{task_id}/comments")
+def get_comments(task_id: str, board: Optional[str] = Query(None)):
+    with _board_conn(board) as (board, conn):
+        _require_task(conn, task_id)
+        return {"comments": _comments_with_attachments(conn, task_id, board)}
 
 
 class LinkBody(BaseModel):
@@ -1242,6 +1350,158 @@ def get_stats(board: Optional[str] = Query(None)):
     """Per-status + per-assignee counts + oldest-ready age (HUD and router profiles)."""
     with _board_conn(board) as (board, conn):
         return kanban_db.board_stats(conn)
+
+
+# --- Token usage -------------------------------------------------------------
+
+def _usage_state_dbs() -> list[tuple[str, str]]:
+    """(profile, sqlite path) for every Hermes state.db that records model usage."""
+    out: list[tuple[str, str]] = []
+    default = os.path.expanduser("~/.hermes/state.db")
+    if os.path.exists(default):
+        out.append(("default", default))
+    root = os.path.expanduser("~/.hermes/profiles")
+    try:
+        for name in sorted(os.listdir(root)):
+            fp = os.path.join(root, name, "state.db")
+            if os.path.exists(fp):
+                out.append((name, fp))
+    except OSError:
+        pass
+    return out
+
+
+def _task_session_map() -> dict[str, tuple[str, str]]:
+    """worker_session_id -> (task_id, task_title). Session ids live in task_runs.metadata."""
+    out: dict[str, tuple[str, str]] = {}
+    try:
+        with closing(sqlite3.connect(f"file:{str(kanban_db.kanban_db_path())}?mode=ro", uri=True, timeout=5)) as conn:
+            rows = conn.execute(
+                "SELECT r.task_id, t.title, r.metadata FROM task_runs r "
+                "LEFT JOIN tasks t ON t.id = r.task_id "
+                "WHERE r.metadata LIKE '%worker_session_id%' ORDER BY r.started_at").fetchall()
+    except Exception as exc:  # pragma: no cover - board optional
+        log.debug("token-usage: task_runs lookup failed: %s", exc)
+        return out
+    for task_id, title, meta in rows:
+        try:
+            sid = (json.loads(meta or "{}") or {}).get("worker_session_id")
+        except Exception:
+            sid = None
+        if sid:
+            out[str(sid)] = (task_id, title or task_id)
+    return out
+
+
+@router.get("/token-usage")
+def get_token_usage(days: int = Query(14, ge=1, le=120)):
+    """Real token consumption recorded by Hermes (session_model_usage), aggregated.
+
+    Windows are computed from each usage row's ``last_seen`` (local time), so a session
+    that spanned midnight lands in the bucket where it was last active.
+    ``total`` = input + output; cache read/write and reasoning are reported separately
+    because cache reads dominate the raw count and would dwarf real spend.
+    """
+    now = time.time()
+    day0 = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    windows = {"today": day0, "week": now - 7 * 86400, "month": now - 30 * 86400, "all": 0.0}
+    agg = {k: {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0,
+               "reasoning": 0, "calls": 0, "cost": 0.0} for k in windows}
+    by_model: dict[str, dict[str, Any]] = {}
+    by_profile: dict[str, dict[str, Any]] = {}
+    by_session: dict[str, dict[str, Any]] = {}
+    daily: dict[str, dict[str, int]] = {}
+    scanned = 0
+
+    for profile, db in _usage_state_dbs():
+        try:
+            uri = f"file:{db}?mode=ro"
+            with closing(sqlite3.connect(uri, uri=True, timeout=5)) as conn:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute(
+                    "SELECT session_id, model, input_tokens, output_tokens, cache_read_tokens, "
+                    "cache_write_tokens, reasoning_tokens, api_call_count, estimated_cost_usd, "
+                    "last_seen FROM session_model_usage").fetchall()
+        except Exception as exc:
+            log.debug("token-usage: %s unreadable: %s", db, exc)
+            continue
+        for r in rows:
+            scanned += 1
+            inp = int(r["input_tokens"] or 0)
+            out = int(r["output_tokens"] or 0)
+            cr = int(r["cache_read_tokens"] or 0)
+            cw = int(r["cache_write_tokens"] or 0)
+            rt = int(r["reasoning_tokens"] or 0)
+            calls = int(r["api_call_count"] or 0)
+            cost = float(r["estimated_cost_usd"] or 0.0)
+            seen = float(r["last_seen"] or 0.0)
+            bucket = dict(input=inp, output=out, cache_read=cr, cache_write=cw,
+                          reasoning=rt, calls=calls, cost=cost)
+            for name, start in windows.items():
+                if seen >= start:
+                    for key in ("input", "output", "cache_read", "cache_write", "reasoning", "calls"):
+                        agg[name][key] += bucket[key]
+                    agg[name]["cost"] += cost
+            model = r["model"] or "unknown"
+            for target, key in ((by_model, model), (by_profile, profile)):
+                cell = target.setdefault(key, {"input": 0, "output": 0, "cache_read": 0,
+                                               "cache_write": 0, "reasoning": 0, "calls": 0, "cost": 0.0})
+                for k in ("input", "output", "cache_read", "cache_write", "reasoning", "calls"):
+                    cell[k] += bucket[k]
+                cell["cost"] += cost
+            sess = by_session.setdefault(r["session_id"], {"input": 0, "output": 0, "cache_read": 0,
+                                                           "cache_write": 0, "reasoning": 0,
+                                                           "calls": 0, "cost": 0.0, "last_seen": 0.0})
+            for k in ("input", "output", "cache_read", "cache_write", "reasoning", "calls"):
+                sess[k] += bucket[k]
+            sess["cost"] += cost
+            sess["last_seen"] = max(sess["last_seen"], seen)
+            if seen >= now - days * 86400:
+                dkey = datetime.datetime.fromtimestamp(seen).strftime("%Y-%m-%d")
+                dcell = daily.setdefault(dkey, {"input": 0, "output": 0, "cache_read": 0, "calls": 0})
+                dcell["input"] += inp
+                dcell["output"] += out
+                dcell["cache_read"] += cr
+                dcell["calls"] += calls
+
+    sid_map = _task_session_map()
+    by_task: dict[str, dict[str, Any]] = {}
+    unattributed = {"input": 0, "output": 0, "cache_read": 0, "calls": 0}
+    for sid, cell in by_session.items():
+        hit = sid_map.get(sid)
+        if hit:
+            tid, title = hit
+            row = by_task.setdefault(tid, {"task_id": tid, "title": title, "input": 0, "output": 0,
+                                           "cache_read": 0, "calls": 0, "sessions": 0})
+            row["sessions"] += 1
+        else:
+            row = unattributed
+        row["input"] += cell["input"]
+        row["output"] += cell["output"]
+        row["cache_read"] += cell["cache_read"]
+        row["calls"] += cell["calls"]
+
+    def total(d: dict[str, Any]) -> dict[str, Any]:
+        out = dict(d)
+        out["total"] = int(d.get("input", 0)) + int(d.get("output", 0))
+        return out
+
+    return {
+        "ok": True,
+        "now": int(now),
+        "rows_scanned": scanned,
+        "sources": [{"profile": p, "db": d} for p, d in _usage_state_dbs()],
+        "windows": {k: total(v) for k, v in agg.items()},
+        "by_model": sorted((total(dict(model=m, **v)) for m, v in by_model.items()),
+                           key=lambda r: r["total"], reverse=True)[:12],
+        "by_profile": sorted((total(dict(profile=p, **v)) for p, v in by_profile.items()),
+                             key=lambda r: r["total"], reverse=True),
+        "by_task": sorted((total(dict(v)) for v in by_task.values()),
+                          key=lambda r: r["total"], reverse=True)[:15],
+        "unattributed": total(unattributed),
+        "daily": sorted(({"date": k, **v, "total": v["input"] + v["output"]} for k, v in daily.items()),
+                        key=lambda r: r["date"]),
+    }
 
 
 @router.get("/assignees")
@@ -1845,3 +2105,705 @@ async def stream_events(ws: WebSocket):
             pass
     finally:
         await tail.shutdown()
+
+
+# --- 手机端基础聊天（POST /agent-chat + GET /agent-chat/{job}） ------------------
+# 手机 App 需要一个「不想建卡、就想问一句」的入口。dashboard 只有 PTY/TUI 通道，
+# 所以这里起一个后台 hermes 单轮进程（-q），把 stdout 收进内存给 App 轮询。
+# 状态放进程内存即可：App 断线重发一条就行，不落库、不占看板。
+
+class AgentChatBody(BaseModel):
+    prompt: str
+    history: Optional[list[dict]] = None
+
+
+_CHAT_JOBS: dict[str, dict[str, Any]] = {}
+_CHAT_JOBS_MAX = 200
+_CHAT_JOBS_TTL = 24 * 3600
+_CHAT_JOBS_FILE = os.path.expanduser("~/.hermes/kanban_agent_chat_jobs.json")
+
+
+def _load_chat_jobs() -> None:
+    """启动时把上次的 job 读回来：手机端轮询不应该因为 dashboard 重启就 404。"""
+    try:
+        with open(_CHAT_JOBS_FILE, "r", encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except Exception:
+        return
+    now = time.time()
+    if not isinstance(raw, dict):
+        return
+    for job_id, job in raw.items():
+        if not isinstance(job, dict):
+            continue
+        if now - float(job.get("updated_at") or 0) > _CHAT_JOBS_TTL:
+            continue
+        if job.get("status") == "running":
+            # 老进程的子进程已经不归我们管了，别让客户端永远转圈
+            job["status"] = "error"
+            job["error"] = "dashboard 重启过，这次回复没接住，请重发一次"
+        _CHAT_JOBS[job_id] = job
+
+
+def _save_chat_jobs() -> None:
+    try:
+        tmp = _CHAT_JOBS_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(_CHAT_JOBS, fh, ensure_ascii=False)
+        os.replace(tmp, _CHAT_JOBS_FILE)
+    except Exception:
+        log.debug("save chat jobs failed", exc_info=True)
+
+
+def _set_chat_job(job_id: str, payload: dict[str, Any]) -> None:
+    payload = dict(payload)
+    payload["updated_at"] = time.time()
+    _CHAT_JOBS[job_id] = payload
+    if len(_CHAT_JOBS) > _CHAT_JOBS_MAX:
+        stale = sorted(_CHAT_JOBS, key=lambda k: _CHAT_JOBS[k].get("updated_at") or 0)
+        for old in stale[: len(_CHAT_JOBS) - _CHAT_JOBS_MAX]:
+            _CHAT_JOBS.pop(old, None)
+    _save_chat_jobs()
+
+
+_load_chat_jobs()
+
+
+def _hermes_binary() -> Optional[str]:
+    for cand in (
+        os.path.join(os.environ.get("HERMES_HOME", ""), "hermes-agent", ".hermes", "bin", "hermes"),
+        os.path.expanduser("~/.hermes/hermes-agent/.hermes/bin/hermes"),
+    ):
+        if cand and os.path.isfile(cand) and os.access(cand, os.X_OK):
+            return cand
+    return shutil.which("hermes")
+
+
+def _chat_env() -> dict[str, str]:
+    """干净身份：worker / delegate 的 env 会让子进程拒绝改看板，也会串 profile。"""
+    env = dict(os.environ)
+    for key in ("HERMES_PROFILE", "HERMES_DELEGATED_CHILD_CONTEXT", "HERMES_KANBAN_TASK",
+                "HERMES_KANBAN_RUN_ID", "HERMES_SESSION_SOURCE", "HERMES_KANBAN_WORKSPACE",
+                "HERMES_KANBAN_CLAIM_TTL_SECONDS"):
+        env.pop(key, None)
+    env["HERMES_HOME"] = os.path.expanduser("~/.hermes")
+    env["PYTHONUNBUFFERED"] = "1"
+    return env
+
+
+def _run_agent_chat(job_id: str, prompt: str) -> None:
+    started = time.time()
+    try:
+        binary = _hermes_binary()
+        if not binary:
+            _set_chat_job(job_id, {"status": "error", "error": "找不到 hermes 可执行文件", "elapsed": 0})
+            return
+        proc = subprocess.run(
+            [binary, "chat", "-q", prompt, "--quiet"],
+            capture_output=True, text=True, timeout=900,
+            cwd=os.path.expanduser("~"), env=_chat_env(), stdin=subprocess.DEVNULL,
+        )
+        out = (proc.stdout or "").strip()
+        err = (proc.stderr or "").strip()
+        if proc.returncode != 0 and not out:
+            _set_chat_job(job_id, {"status": "error", "error": err[-1500:] or f"exit {proc.returncode}",
+                                   "elapsed": round(time.time() - started, 1)})
+        else:
+            _set_chat_job(job_id, {"status": "done", "reply": out or err[-1500:],
+                                   "elapsed": round(time.time() - started, 1)})
+    except subprocess.TimeoutExpired:
+        _set_chat_job(job_id, {"status": "error", "error": "agent 超过 15 分钟没回，已放弃这次请求",
+                               "elapsed": round(time.time() - started, 1)})
+    except Exception as exc:  # never take the dashboard down
+        log.exception("agent chat failed")
+        _set_chat_job(job_id, {"status": "error", "error": f"{type(exc).__name__}: {exc}",
+                               "elapsed": round(time.time() - started, 1)})
+
+
+@router.post("/agent-chat")
+def agent_chat_start(payload: AgentChatBody):
+    prompt = (payload.prompt or "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt 不能为空")
+    if payload.history:
+        lines = []
+        for item in payload.history[-20:]:
+            role = "用户" if (item.get("role") == "user") else "助手"
+            text = str(item.get("text") or "").strip()
+            if text:
+                lines.append(f"{role}：{text}")
+        if lines:
+            prompt = "以下是前面这轮对话的上下文（用于接着聊，不用复述）：\n" + "\n".join(lines) + "\n\n用户最新一条：" + prompt
+    job_id = uuid.uuid4().hex[:12]
+    _set_chat_job(job_id, {"status": "running", "elapsed": 0})
+    threading.Thread(target=_run_agent_chat, args=(job_id, prompt), daemon=True).start()
+    return {"job": job_id, "status": "running"}
+
+
+@router.get("/agent-chat/{job_id}")
+def agent_chat_result(job_id: str):
+    job = _CHAT_JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="没有这个会话任务（可能已过期，重新发一次）")
+    return job
+
+
+# --- 任务内对话 agent ---------------------------------------------------------
+#
+# 用户的原话：「给每个任务详情接入一个对话 agent，他能根据这次任务的详情回复你问题，
+# 因为记录和讨论有时候我都看不懂」。
+#
+# 所以这里的 agent 不是通用聊天：上下文由服务端按卡片拼（正文 / 结果 / 元数据 /
+# 运行记录 / 评论 / 事件 / 父子任务），提示词也约束成「用中文讲人话、先给结论、
+# 不编造、只读不改看板」。问答历史按任务落在 JSON 里（不占 kanban.db 表结构），
+# 换设备、重开 App、dashboard 重启后都还在。
+#
+# 复用 _CHAT_JOBS 存 job（已有 TTL / 上限 / 落盘），所以轮询端点与普通聊天同构。
+
+_TASK_CHAT_FILE = os.path.expanduser("~/.hermes/kanban_task_chat.json")
+_TASK_CHAT_LOCK = threading.Lock()
+_TASK_CHAT_MAX_TASKS = 300
+_TASK_CHAT_MAX_MSGS = 80
+_TASK_CHAT_PROMPT_CHARS = 60_000
+
+_STATUS_CN = {
+    "triage": "待分诊", "todo": "待办", "scheduled": "定时", "ready": "就绪",
+    "running": "进行中", "blocked": "阻塞", "review": "待审", "done": "已完成",
+    "archived": "已归档",
+}
+
+
+def _load_task_chats() -> dict[str, list[dict]]:
+    try:
+        with open(_TASK_CHAT_FILE, "r", encoding="utf-8") as fh:
+            raw = json.load(fh)
+        return raw if isinstance(raw, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_task_chats() -> None:
+    try:
+        tmp = _TASK_CHAT_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(_TASK_CHATS, fh, ensure_ascii=False)
+        os.replace(tmp, _TASK_CHAT_FILE)
+    except Exception:
+        log.debug("save task chats failed", exc_info=True)
+
+
+_TASK_CHATS: dict[str, list[dict]] = _load_task_chats()
+
+
+def _task_thread(task_id: str) -> list[dict]:
+    with _TASK_CHAT_LOCK:
+        return list(_TASK_CHATS.get(task_id) or [])
+
+
+def _task_thread_append(task_id: str, role: str, text: str) -> None:
+    with _TASK_CHAT_LOCK:
+        msgs = _TASK_CHATS.setdefault(task_id, [])
+        msgs.append({"role": role, "text": text, "ts": int(time.time())})
+        if len(msgs) > _TASK_CHAT_MAX_MSGS:
+            del msgs[: len(msgs) - _TASK_CHAT_MAX_MSGS]
+        if len(_TASK_CHATS) > _TASK_CHAT_MAX_TASKS:
+            ordered = sorted(_TASK_CHATS.items(),
+                             key=lambda kv: (kv[1][-1].get("ts") if kv[1] else 0) or 0)
+            for stale, _ in ordered[: len(_TASK_CHATS) - _TASK_CHAT_MAX_TASKS]:
+                _TASK_CHATS.pop(stale, None)
+        _save_task_chats()
+
+
+def _task_thread_clear(task_id: str) -> None:
+    with _TASK_CHAT_LOCK:
+        _TASK_CHATS.pop(task_id, None)
+        _save_task_chats()
+
+
+def _clip_text(text: Optional[str], limit: int) -> str:
+    value = (text or "").strip()
+    if len(value) <= limit:
+        return value
+    return value[:limit] + f"\n…（此处截断，原文还有 {len(value) - limit} 字）"
+
+
+def _fmt_ts(value: Any) -> str:
+    try:
+        ts = int(value)
+    except (TypeError, ValueError):
+        return "—"
+    if ts <= 0:
+        return "—"
+    return time.strftime("%m-%d %H:%M", time.localtime(ts))
+
+
+def _task_context(conn, task_id: str) -> str:
+    """把这张卡摊平成一段中文资料，喂给 agent。只读，不改任何状态。"""
+    task = _require_task(conn, task_id)
+    links = _links_for(conn, task_id)
+    runs = kanban_db.list_runs(conn, task_id) or []
+    comments = kanban_db.list_comments(conn, task_id) or []
+    events = kanban_db.list_events(conn, task_id) or []
+
+    lines: list[str] = []
+    lines.append("## 卡片档案")
+    lines.append(f"- 任务号：{task.id}")
+    lines.append(f"- 标题：{task.title}")
+    lines.append(f"- 当前列：{_STATUS_CN.get(task.status, task.status)}（{task.status}）")
+    lines.append(f"- 分配人：{task.assignee or '未指派'}　优先级：P{task.priority or 0}　创建人：{task.created_by or '—'}")
+    lines.append(f"- 创建：{_fmt_ts(task.created_at)}　开始：{_fmt_ts(task.started_at)}　完成：{_fmt_ts(task.completed_at)}")
+    if getattr(task, "consecutive_failures", None):
+        lines.append(f"- 连续失败次数：{task.consecutive_failures}")
+    attempts = getattr(task, "attempts", None)
+    if attempts:
+        lines.append(f"- 累计尝试：{attempts} 次")
+    if getattr(task, "block_kind", None):
+        lines.append(f"- 阻塞类型：{task.block_kind}")
+    if getattr(task, "last_failure_error", None):
+        lines.append(f"- 最近一次失败原因：{_clip_text(task.last_failure_error, 600)}")
+    if getattr(task, "model_override", None):
+        lines.append(f"- 指定模型：{task.model_override}")
+    if getattr(task, "skills", None):
+        lines.append(f"- 指定技能：{task.skills}")
+
+    if links.get("parents") or links.get("children"):
+        lines.append("")
+        lines.append("## 父子任务")
+        for pid in links.get("parents") or []:
+            parent = kanban_db.get_task(conn, pid)
+            if parent:
+                lines.append(f"- 父任务 {parent.id}「{parent.title}」当前在{_STATUS_CN.get(parent.status, parent.status)}")
+        for cid in links.get("children") or []:
+            child = kanban_db.get_task(conn, cid)
+            if child:
+                lines.append(f"- 子任务 {child.id}「{child.title}」当前在{_STATUS_CN.get(child.status, child.status)}")
+
+    lines.append("")
+    lines.append("## 任务正文（用户最初下的需求）")
+    body = _clip_text(task.body, 9000)
+    lines.append(body or "（没有正文）")
+
+    result = _clip_text(getattr(task, "result", None), 3000)
+    if result:
+        lines.append("")
+        lines.append("## 任务结果字段（result）")
+        lines.append(result)
+
+    summary = kanban_db.latest_summary(conn, task_id)
+    if summary:
+        lines.append("")
+        lines.append("## 最近一次 worker 交上来的总结")
+        lines.append(_clip_text(summary, 3500))
+
+    if runs:
+        lines.append("")
+        lines.append(f"## 运行记录（共 {len(runs)} 次，下面是最新 {min(len(runs), 6)} 次）")
+        for run in runs[-6:]:
+            head = (f"- run#{run.id}　{run.profile or '—'}　状态={run.status}"
+                    f"　结果={run.outcome or '—'}　{_fmt_ts(run.started_at)} → {_fmt_ts(run.ended_at)}")
+            lines.append(head)
+            if run.summary:
+                lines.append("  摘要：" + _clip_text(run.summary, 1200).replace("\n", "\n  "))
+            if run.error:
+                lines.append("  报错：" + _clip_text(run.error, 600).replace("\n", "\n  "))
+
+    if comments:
+        shown = comments[-18:]
+        lines.append("")
+        lines.append(f"## 讨论区（共 {len(comments)} 条，下面是最新 {len(shown)} 条）")
+        for c in shown:
+            author = c.author or "—"
+            atts = ""
+            lines.append(f"- #{c.id}　{author}　{_fmt_ts(c.created_at)}{atts}")
+            lines.append("  " + _clip_text(c.body, 1400).replace("\n", "\n  "))
+
+    real_events = [e for e in events if e.kind != "heartbeat"]
+    if real_events:
+        lines.append("")
+        lines.append(f"## 关键事件（心跳已略，共 {len(real_events)} 条，最新 {min(len(real_events), 12)} 条）")
+        for e in real_events[-12:]:
+            payload = json.dumps(e.payload, ensure_ascii=False) if e.payload else ""
+            lines.append(f"- {_fmt_ts(e.created_at)}　{e.kind}　{_clip_text(payload, 200)}")
+
+    text = "\n".join(lines)
+    if len(text) > _TASK_CHAT_PROMPT_CHARS:
+        text = text[:_TASK_CHAT_PROMPT_CHARS] + "\n…（资料过长，后面截断）"
+    return text
+
+
+_TASK_ASK_SYSTEM = """你是「Hermes 看板」iOS 客户端里嵌在任务详情里的解说助手。
+
+你看的用户是量化研究者，他不是工程师时间线上的旁观者——但他经常看不懂 worker 交上来的
+执行记录、报错和长篇讨论。你的唯一职责是：**用中文把他正在看的这张卡讲明白**。
+
+回答要求（必须遵守）：
+1. 先给结论，一到两句话说完；需要展开时再用「·」分点，最多 5 点。
+2. 讲人话：把术语、缩写、内部代号翻译成他能判断的表述；引用卡里的原文只引最短必要片段。
+3. 只用下面资料里的事实。资料里没写的，直接说「这张卡里没写」，不要推测成事实；
+   需要推断时明确写「我猜」并给出依据。
+4. 不要复述整段正文或整段评论，不要把资料再抄一遍。
+5. 他在问「接下来怎么办」时，给出可执行的具体下一步（改状态 / 换人 / 补什么信息 / 等什么）。
+6. 你是只读的：不要修改看板、不要发评论、不要改状态、不要创建任务。需要改的话，
+   告诉他「在 App 里怎么点」，由他自己操作。
+"""
+
+
+def _task_ask_prompt(task_id: str, context: str, history: list[dict], question: str) -> str:
+    parts = [_TASK_ASK_SYSTEM, "", f"# 下面这张卡是 {task_id} 的全部已知资料", context, ""]
+    if history:
+        lines = []
+        for item in history[-10:]:
+            role = "用户" if item.get("role") == "user" else "你"
+            text = str(item.get("text") or "").strip()
+            if text:
+                lines.append(f"{role}：{_clip_text(text, 800)}")
+        if lines:
+            parts += ["# 你们之前这条对话说过的话（用来接着聊，不用复述）", "\n".join(lines), ""]
+    parts += ["# 他现在问你", question]
+    return "\n".join(parts)
+
+
+def _job_cancelled(job_id: str) -> bool:
+    """问答记录被清空（或卡被删）后，还在跑的这次回答要丢掉，别把线程又写回来。"""
+    return (_CHAT_JOBS.get(job_id) or {}).get("status") == "cancelled"
+
+
+def _run_task_ask(job_id: str, task_id: str, prompt: str) -> None:
+    started = time.time()
+    try:
+        binary = _hermes_binary()
+        if not binary:
+            _set_chat_job(job_id, {"status": "error", "task_id": task_id,
+                                   "error": "找不到 hermes 可执行文件", "elapsed": 0})
+            return
+        proc = subprocess.run(
+            [binary, "chat", "-q", prompt, "--quiet"],
+            capture_output=True, text=True, timeout=600,
+            cwd=os.path.expanduser("~"), env=_chat_env(), stdin=subprocess.DEVNULL,
+        )
+        out = (proc.stdout or "").strip()
+        err = (proc.stderr or "").strip()
+        elapsed = round(time.time() - started, 1)
+        if _job_cancelled(job_id):
+            return
+        if not out:
+            message = f"这次没答上来：{(err[-800:] or f'hermes 退出码 {proc.returncode}')}"
+            _task_thread_append(task_id, "assistant", message)
+            _set_chat_job(job_id, {"status": "error", "task_id": task_id, "error": message, "elapsed": elapsed})
+        else:
+            _task_thread_append(task_id, "assistant", out)
+            _set_chat_job(job_id, {"status": "done", "task_id": task_id, "reply": out, "elapsed": elapsed})
+    except subprocess.TimeoutExpired:
+        if _job_cancelled(job_id):
+            return
+        message = "这次超过 10 分钟没答上来，已经放弃（可以再问一次，或者把问题问小一点）"
+        _task_thread_append(task_id, "assistant", message)
+        _set_chat_job(job_id, {"status": "error", "task_id": task_id, "error": message,
+                               "elapsed": round(time.time() - started, 1)})
+    except Exception as exc:  # pragma: no cover - 保住 dashboard
+        log.exception("task ask failed")
+        _set_chat_job(job_id, {"status": "error", "task_id": task_id,
+                               "error": f"{type(exc).__name__}: {exc}",
+                               "elapsed": round(time.time() - started, 1)})
+
+
+class TaskAskBody(BaseModel):
+    prompt: str
+
+
+@router.get("/tasks/{task_id}/ask")
+def task_ask_thread(task_id: str, board: Optional[str] = Query(None)):
+    """这条任务的问答历史 + 还没答完的 job（App 重开/换设备靠它续上）。"""
+    with _board_conn(board) as (board, conn):
+        _require_task(conn, task_id)
+    pending = None
+    for job_id, job in _CHAT_JOBS.items():
+        if job.get("task_id") == task_id and job.get("status") == "running":
+            pending = {"job": job_id, "started_at": job.get("updated_at") or job.get("started_at")}
+            break
+    return {"task_id": task_id, "messages": _task_thread(task_id), "pending": pending}
+
+
+@router.post("/tasks/{task_id}/ask")
+def task_ask_start(task_id: str, payload: TaskAskBody, board: Optional[str] = Query(None)):
+    question = (payload.prompt or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="问题不能为空")
+    if len(question) > 4000:
+        question = question[:4000]
+    with _board_conn(board) as (board, conn):
+        _require_task(conn, task_id)
+        context = _task_context(conn, task_id)
+    history = _task_thread(task_id)
+    prompt = _task_ask_prompt(task_id, context, history, question)
+    _task_thread_append(task_id, "user", question)
+    job_id = uuid.uuid4().hex[:12]
+    _set_chat_job(job_id, {"status": "running", "task_id": task_id, "elapsed": 0,
+                           "started_at": time.time()})
+    threading.Thread(target=_run_task_ask, args=(job_id, task_id, prompt), daemon=True).start()
+    return {"job": job_id, "status": "running"}
+
+
+@router.delete("/tasks/{task_id}/ask")
+def task_ask_clear(task_id: str, board: Optional[str] = Query(None)):
+    with _board_conn(board) as (board, conn):
+        _require_task(conn, task_id)
+    _task_thread_clear(task_id)
+    # 正在跑的那次回答作废：不标掉的话客户端会一直显示「思考中」，答案落地还会把线程写回来
+    for job_id, job in list(_CHAT_JOBS.items()):
+        if job.get("task_id") == task_id and job.get("status") == "running":
+            _set_chat_job(job_id, {"status": "cancelled", "task_id": task_id,
+                                   "error": "问答记录已清空，这次回答作废", "elapsed": job.get("elapsed") or 0})
+    return {"ok": True}
+
+
+# --- 多设备：设备注册表 -------------------------------------------------------
+#
+# 每台装了 App 的设备（iPhone / iPad）定期心跳，服务端记一份注册表，任何设备都能看到
+# 「现在有哪些设备在看这个看板、最后活跃时间、装的是哪个版本」，并可以把旧设备移除。
+# 所有写操作仍然走同一份看板库，所以多设备天然共享同一块板。
+
+_DEVICES_FILE = os.path.expanduser("~/.hermes/kanban_devices.json")
+_DEVICES: dict[str, dict[str, Any]] = {}
+_DEVICES_LOCK = threading.Lock()
+_DEVICE_ONLINE_WINDOW = 150  # 秒：心跳间隔 60s，两个周期内算在线
+
+
+def _load_devices() -> None:
+    try:
+        with open(_DEVICES_FILE, "r", encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except Exception:
+        return
+    if isinstance(raw, dict):
+        _DEVICES.update({k: v for k, v in raw.items() if isinstance(v, dict)})
+
+
+def _save_devices() -> None:
+    try:
+        tmp = _DEVICES_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(_DEVICES, fh, ensure_ascii=False, indent=1)
+        os.replace(tmp, _DEVICES_FILE)
+    except Exception:
+        log.debug("save devices failed", exc_info=True)
+
+
+def _device_row(device_id: str, row: dict[str, Any]) -> dict[str, Any]:
+    now = time.time()
+    last = float(row.get("last_seen") or 0)
+    out = dict(row)
+    out["device_id"] = device_id
+    out["online"] = (now - last) < _DEVICE_ONLINE_WINDOW
+    out["last_seen_ago"] = int(now - last)
+    return out
+
+
+class DeviceHeartbeatBody(BaseModel):
+    device_id: str
+    name: Optional[str] = None
+    model: Optional[str] = None
+    system: Optional[str] = None
+    app_version: Optional[str] = None
+    board: Optional[str] = None
+    user: Optional[str] = None
+
+
+@router.post("/devices/heartbeat")
+def device_heartbeat(payload: DeviceHeartbeatBody):
+    did = (payload.device_id or "").strip()
+    if not did:
+        raise HTTPException(status_code=400, detail="device_id 不能为空")
+    row = payload.model_dump(exclude={"device_id"})
+    now = time.time()
+    with _DEVICES_LOCK:
+        prev = _DEVICES.get(did) or {}
+        row["last_seen"] = now
+        row["first_seen"] = prev.get("first_seen") or now
+        row["heartbeats"] = int(prev.get("heartbeats") or 0) + 1
+        _DEVICES[did] = row
+        _save_devices()
+    return {"device": _device_row(did, row)}
+
+
+@router.get("/devices")
+def list_devices():
+    with _DEVICES_LOCK:
+        rows = [_device_row(k, v) for k, v in _DEVICES.items()]
+    rows.sort(key=lambda r: r.get("last_seen") or 0, reverse=True)
+    return {
+        "devices": rows,
+        "online": sum(1 for r in rows if r.get("online")),
+        "server_time": time.time(),
+    }
+
+
+@router.delete("/devices/{device_id}")
+def remove_device(device_id: str):
+    with _DEVICES_LOCK:
+        if _DEVICES.pop(device_id, None) is None:
+            raise HTTPException(status_code=404, detail="没有这台设备")
+        _save_devices()
+    return {"ok": True, "device_id": device_id}
+
+
+_load_devices()
+
+
+# --- App 自更新：让这台 Mac 用 devicectl 把最新包直接装进手机 -------------------
+#
+# 为什么不做 OTA：免费个人签名只能拿到 development 描述文件，iOS 27 的 appstored
+# 会把 ipa 完整下完（服务端日志实测两次全量下载 2212128 字节），然后拒绝安装，
+# App 版本一直是旧号。devicectl 走 CoreDevice 通道直装没有这个限制，
+# 前提：手机和这台 Mac 在同一个 Wi-Fi（或插 USB 线），且手机是解锁状态。
+
+_APP_UPDATE_FILE = os.path.expanduser("~/.hermes/kanban_app_update.json")
+_APP_UPDATE_LOCK = threading.Lock()
+_APP_UPDATE: dict[str, Any] = {
+    "state": "idle",       # idle / running / done / failed
+    "step": "",
+    "detail": "",
+    "version": None,
+    "log": [],
+    "started_at": None,
+    "finished_at": None,
+    "ok": None,
+}
+_APP_OTA_ROOT = os.path.expanduser("~/kanban-ota")
+
+
+def _au_persist() -> None:
+    try:
+        with _APP_UPDATE_LOCK:
+            snapshot = json.loads(json.dumps(_APP_UPDATE, ensure_ascii=False))
+        tmp = _APP_UPDATE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(snapshot, fh, ensure_ascii=False, indent=1)
+        os.replace(tmp, _APP_UPDATE_FILE)
+    except Exception:
+        log.debug("persist app update failed", exc_info=True)
+
+
+def _au_set(step: str = "", **kw) -> None:
+    with _APP_UPDATE_LOCK:
+        if step:
+            _APP_UPDATE["step"] = step
+            _APP_UPDATE["log"] = (_APP_UPDATE.get("log") or [])[-40:] + [
+                {"ts": time.strftime("%H:%M:%S"), "line": step}]
+        _APP_UPDATE.update(kw)
+    _au_persist()
+
+
+def _au_latest_version() -> Optional[str]:
+    try:
+        with open(os.path.join(_APP_OTA_ROOT, "releases.json"), "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        rows = data.get("releases", []) if isinstance(data, dict) else data
+        rows = sorted(rows, key=lambda r: r.get("published_at", ""), reverse=True)
+        return rows[0].get("version") if rows else None
+    except Exception:
+        return None
+
+
+def _au_physical_device() -> tuple[Optional[str], str]:
+    xcrun = shutil.which("xcrun") or "/usr/bin/xcrun"
+    try:
+        out = subprocess.run([xcrun, "devicectl", "list", "devices"], capture_output=True,
+                             text=True, timeout=40).stdout
+    except Exception as exc:
+        return None, f"跑不动 devicectl：{exc}"
+    for line in out.splitlines():
+        if "physical" not in line:
+            continue
+        m = re.search(r"\b([0-9A-F]{8}-[0-9A-F]{16})\b", line)
+        if m:
+            return m.group(1), line.strip()
+    return None, "这台 Mac 上没有已配对的真机（先用数据线连一次，或在 Xcode 勾「Connect via network」）"
+
+
+def _au_friendly(blob: str) -> str:
+    """把 devicectl 的英文报错翻成能照做的中文（原文留在 detail 里）。"""
+    low = blob.lower()
+    if "4016" in blob or "usage assertion" in low:
+        return "手机连不上：解锁手机，确认它和这台 Mac 在同一个 Wi-Fi（或插 USB 线）后重试"
+    if "unable to install" in low or "applicationverificationfailed" in low:
+        return "iOS 拒绝安装这个包（签名或描述文件问题）"
+    if "device is locked" in low:
+        return "手机锁着：解锁后重试"
+    if "not found" in low or "no device" in low:
+        return "这台 Mac 现在看不到手机：先插线连一次，或在 Xcode 里勾「Connect via network」"
+    return "直装失败（原文见下）"
+
+
+def _au_job(version: str) -> None:
+    import tempfile
+
+    xcrun = shutil.which("xcrun") or "/usr/bin/xcrun"
+    try:
+        _au_set("准备安装包", started_at=time.time(), ok=None, detail="")
+        ipa = os.path.join(_APP_OTA_ROOT, "releases", version, "KanbanIOS.ipa")
+        if not os.path.exists(ipa):
+            raise RuntimeError(f"找不到安装包 {ipa}")
+
+        udid, why = _au_physical_device()
+        if not udid:
+            raise RuntimeError(why)
+        _au_set(f"找到手机 {udid[:8]}…")
+
+        work = tempfile.mkdtemp(prefix="kanban-app-update-")
+        rc = subprocess.run(["unzip", "-q", "-o", ipa, "-d", work], capture_output=True,
+                            text=True, timeout=120)
+        if rc.returncode != 0:
+            raise RuntimeError(f"解包失败：{(rc.stdout or '') + (rc.stderr or '')}"[:400])
+        app_path = os.path.join(work, "Payload", "KanbanIOS.app")
+        if not os.path.isdir(app_path):
+            raise RuntimeError("包里没有 Payload/KanbanIOS.app")
+
+        _au_set("正在直装到手机（手机需解锁、同一 Wi-Fi）")
+        done = subprocess.run([xcrun, "devicectl", "device", "install", "app",
+                               "--device", udid, app_path],
+                              capture_output=True, text=True, timeout=600)
+        blob = ((done.stdout or "") + (done.stderr or "")).strip()
+        if done.returncode != 0 or blob[:200].find("ERROR") >= 0:
+            raise RuntimeError(_au_friendly(blob))
+        _au_set("装好了，正在拉起新版本")
+
+        launch = subprocess.run([xcrun, "devicectl", "device", "process", "launch",
+                                 "--device", udid, "--terminate-existing", "top.panrc.kanban"],
+                                capture_output=True, text=True, timeout=120)
+        lb = ((launch.stdout or "") + (launch.stderr or "")).strip()
+        _au_set(f"完成：{version}", state="done", ok=True, finished_at=time.time(),
+                detail=lb[-300:] or "已安装")
+    except subprocess.TimeoutExpired:
+        _au_set("超时放弃", state="failed", ok=False, finished_at=time.time(),
+                detail="这条命令 10 分钟没结束，通常是手机锁屏或离开了同一个 Wi-Fi")
+    except Exception as exc:
+        _au_set(f"失败：{exc}"[:200], state="failed", ok=False, finished_at=time.time(),
+                detail=str(exc)[:600])
+
+
+class AppUpdateBody(BaseModel):
+    device_id: Optional[str] = None
+
+
+@router.post("/app-update")
+def app_update_start(payload: AppUpdateBody = AppUpdateBody()):
+    """让这台 Mac 把最新包直装到这台手机（免费签名下唯一可靠的升级通道）。"""
+    with _APP_UPDATE_LOCK:
+        if _APP_UPDATE.get("state") == "running":
+            return {"update": dict(_APP_UPDATE)}
+    version = _au_latest_version()
+    if not version:
+        raise HTTPException(status_code=503, detail="这台 Mac 上还没有发布过安装包")
+    _au_set(f"开始安装 {version}", state="running", version=version, ok=None,
+            started_at=time.time(), finished_at=None, detail="", log=[])
+    threading.Thread(target=_au_job, args=(version,), daemon=True).start()
+    with _APP_UPDATE_LOCK:
+        return {"update": dict(_APP_UPDATE)}
+
+
+@router.get("/app-update")
+def app_update_status():
+    with _APP_UPDATE_LOCK:
+        snap = dict(_APP_UPDATE)
+    return {"update": snap, "latest": _au_latest_version()}

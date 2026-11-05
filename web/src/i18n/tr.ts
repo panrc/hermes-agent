@@ -79,6 +79,12 @@ export const tr: Translations = {
       plugins: "Eklentiler",
       sessions: "Oturumlar",
       skills: "Yetenekler",
+      files: "Files",
+      channels: "Channels",
+      webhooks: "Webhooks",
+      pairing: "Pairing",
+      mcp: "MCP",
+      system: "System",
     },
     modelToolsSheetSubtitle: "& araçlar",
     modelToolsSheetTitle: "Model",
@@ -749,6 +755,7 @@ export const tr: Translations = {
       blocked: "Engellendi",
       done: "Bitti",
       archived: "Arşivlendi",
+      review: "Review",
     },
     columnHelp: {
       triage: "Ham fikirler — bir specifier şartnameyi detaylandıracak",
@@ -759,6 +766,7 @@ export const tr: Translations = {
       blocked: "Worker insan girdisi istedi",
       done: "Tamamlandı",
       archived: "Arşivlendi",
+      review: "Implementation complete — awaiting review",
     },
     confirmDone:
       "Bu görev tamamlandı olarak işaretlensin mi? Worker'ın sahiplenmesi serbest bırakılır ve bağımlı altlar hazır hale gelir.",
@@ -783,5 +791,6 @@ export const tr: Translations = {
       "workspace yolu (isteğe bağlı, boşsa atanan kişiden türetilir)",
     logTruncated: "(son 100 KB gösteriliyor — tam günlük şurada: ",
     logAt: ")",
+    clearFilters: "Clear filters",
   },
 };

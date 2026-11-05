@@ -79,6 +79,12 @@ export const it: Translations = {
       plugins: "Plugin",
       sessions: "Sessioni",
       skills: "Competenze",
+      files: "Files",
+      channels: "Channels",
+      webhooks: "Webhooks",
+      pairing: "Pairing",
+      mcp: "MCP",
+      system: "System",
     },
     modelToolsSheetSubtitle: "e strumenti",
     modelToolsSheetTitle: "Modello",
@@ -748,6 +754,7 @@ export const it: Translations = {
       blocked: "Bloccato",
       done: "Fatto",
       archived: "Archiviato",
+      review: "Review",
     },
     columnHelp: {
       triage: "Idee grezze — un specifier elaborerà la specifica",
@@ -758,6 +765,7 @@ export const it: Translations = {
       blocked: "Il worker ha richiesto input umano",
       done: "Completato",
       archived: "Archiviato",
+      review: "Implementation complete — awaiting review",
     },
     confirmDone:
       "Contrassegnare questa attività come completata? La presa in carico del worker viene rilasciata e i figli dipendenti diventano pronti.",
@@ -782,5 +790,6 @@ export const it: Translations = {
       "percorso del workspace (facoltativo, derivato dall'assegnatario se vuoto)",
     logTruncated: "(mostrando ultimi 100 KB — log completo in ",
     logAt: ")",
+    clearFilters: "Clear filters",
   },
 };

@@ -79,6 +79,12 @@ export const ko: Translations = {
       plugins: "플러그인",
       sessions: "세션",
       skills: "스킬",
+      files: "Files",
+      channels: "Channels",
+      webhooks: "Webhooks",
+      pairing: "Pairing",
+      mcp: "MCP",
+      system: "System",
     },
     modelToolsSheetSubtitle: "및 도구",
     modelToolsSheetTitle: "모델",
@@ -748,6 +754,7 @@ export const ko: Translations = {
       blocked: "차단됨",
       done: "완료",
       archived: "보관됨",
+      review: "Review",
     },
     columnHelp: {
       triage: "원시 아이디어 — 스페시파이어가 사양을 구체화합니다",
@@ -758,6 +765,7 @@ export const ko: Translations = {
       blocked: "워커가 사람의 입력을 요청함",
       done: "완료됨",
       archived: "보관됨",
+      review: "Implementation complete — awaiting review",
     },
     confirmDone:
       "이 작업을 완료로 표시하시겠습니까? 워커의 점유가 해제되고 종속된 하위 작업이 ready 상태가 됩니다.",
@@ -782,5 +790,6 @@ export const ko: Translations = {
       "작업 공간 경로 (선택, 비어 있으면 담당자에서 파생됨)",
     logTruncated: "(마지막 100 KB 표시 중 — 전체 로그 위치: ",
     logAt: ")",
+    clearFilters: "Clear filters",
   },
 };

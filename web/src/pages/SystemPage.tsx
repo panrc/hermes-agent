@@ -43,7 +43,7 @@ import { ConfirmDialog } from "@nous-research/ui/ui/components/confirm-dialog";
 import { useModalBehavior } from "@/hooks/useModalBehavior";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
 import { HermesConsoleModal } from "@/components/HermesConsoleModal";
-import { cn, themedBody } from "@/lib/utils";
+import { cn, themedBody, uiLocale } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import {
@@ -1098,7 +1098,7 @@ export default function SystemPage() {
               </Badge>
               <span className="text-sm text-muted-foreground">
                 {curator?.interval_hours ? `every ${curator.interval_hours}h` : ""}
-                {curator?.last_run_at ? ` · last run ${new Date(curator.last_run_at).toLocaleString()}` : " · never run"}
+                {curator?.last_run_at ? ` · last run ${new Date(curator.last_run_at).toLocaleString(uiLocale())}` : " · never run"}
               </span>
             </div>
             <div className="flex items-center gap-2">

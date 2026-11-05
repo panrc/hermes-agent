@@ -79,6 +79,12 @@ export const af: Translations = {
       plugins: "Inproppe",
       sessions: "Sessies",
       skills: "Vaardighede",
+      files: "Files",
+      channels: "Channels",
+      webhooks: "Webhooks",
+      pairing: "Pairing",
+      mcp: "MCP",
+      system: "System",
     },
     modelToolsSheetSubtitle: "& gereedskap",
     modelToolsSheetTitle: "Model",
@@ -749,6 +755,7 @@ export const af: Translations = {
       blocked: "Geblokkeer",
       done: "Klaar",
       archived: "Gearchiveer",
+      review: "Review",
     },
     columnHelp: {
       triage: "Rou idees — 'n spesifiseerder sal die spesifikasie uitwerk",
@@ -759,6 +766,7 @@ export const af: Translations = {
       blocked: "Werker het mensinvoer aangevra",
       done: "Voltooi",
       archived: "Gearchiveer",
+      review: "Implementation complete — awaiting review",
     },
     confirmDone:
       "Merk hierdie taak as klaar? Die werker se eis word vrygestel en afhanklike kinders word gereed.",
@@ -783,5 +791,6 @@ export const af: Translations = {
       "werkruimtepad (opsioneel, afgelei van toegewysde indien leeg)",
     logTruncated: "(toon laaste 100 KB — volledige log by ",
     logAt: ")",
+    clearFilters: "Clear filters",
   },
 };

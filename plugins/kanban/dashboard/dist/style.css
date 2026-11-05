@@ -850,6 +850,15 @@
   color: inherit;
 }
 .hermes-kanban-md strong { font-weight: 600; }
+/* Blockquote — mirrors the iOS client: 3px grey rule + indent. */
+.hermes-kanban-md blockquote,
+.hermes-kanban-md blockquote.hermes-kanban-md-quote {
+  margin: 0.35rem 0;
+  padding: 0.05rem 0 0.05rem 0.65rem;
+  border-left: 3px solid color-mix(in srgb, currentColor 35%, transparent);
+  color: color-mix(in srgb, currentColor 78%, transparent);
+}
+.hermes-kanban-md blockquote > br { line-height: 1.6; }
 
 /* ---- Touch-drag proxy ---------------------------------------------- */
 
@@ -1609,3 +1618,103 @@
 .hermes-kanban-trash-label {
   font-weight: 500;
 }
+
+/* ------------------------------------------------------------------ */
+/* 评论图片 / 附件（气泡内联渲染 + 发送前草稿 chip）                    */
+/* ------------------------------------------------------------------ */
+.hermes-kanban-comment-atts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.hermes-kanban-comment-att-img-wrap { display: inline-flex; }
+.hermes-kanban-comment-att-img {
+  max-width: 260px;
+  max-height: 200px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  cursor: zoom-in;
+  display: block;
+  object-fit: cover;
+}
+.hermes-kanban-comment-att-img-ph {
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px dashed color-mix(in srgb, currentColor 25%, transparent);
+  opacity: .65;
+}
+.hermes-kanban-comment-att-img-ph--err { opacity: 1; color: #ef4444; }
+.hermes-kanban-comment-att-file {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hermes-kanban-comment-att-file:hover { background: color-mix(in srgb, currentColor 12%, transparent); }
+.hermes-kanban-comment-att-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, .82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-out;
+  padding: 4vh 4vw;
+}
+.hermes-kanban-comment-att-zoom img {
+  max-width: 92vw;
+  max-height: 92vh;
+  border-radius: 10px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .5);
+}
+.hermes-kanban-comment-draft {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.hermes-kanban-comment-draft-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  max-width: 100%;
+}
+.hermes-kanban-comment-draft-x {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+  opacity: .6;
+}
+.hermes-kanban-comment-draft-x:hover { opacity: 1; }
+.hermes-kanban-comment-attach-btn {
+  flex: 0 0 auto;
+  height: 32px;
+  width: 32px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+.hermes-kanban-comment-attach-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+.hermes-kanban-comment-attach-btn:disabled { opacity: .5; cursor: default; }

@@ -79,6 +79,12 @@ export const hu: Translations = {
       plugins: "Bővítmények",
       sessions: "Munkamenetek",
       skills: "Készségek",
+      files: "Files",
+      channels: "Channels",
+      webhooks: "Webhooks",
+      pairing: "Pairing",
+      mcp: "MCP",
+      system: "System",
     },
     modelToolsSheetSubtitle: "és eszközök",
     modelToolsSheetTitle: "Modell",
@@ -749,6 +755,7 @@ export const hu: Translations = {
       blocked: "Blokkolva",
       done: "Kész",
       archived: "Archivált",
+      review: "Review",
     },
     columnHelp: {
       triage: "Nyers ötletek — egy specifier kidolgozza a specifikációt",
@@ -759,6 +766,7 @@ export const hu: Translations = {
       blocked: "A worker emberi beavatkozást kért",
       done: "Befejezve",
       archived: "Archiválva",
+      review: "Implementation complete — awaiting review",
     },
     confirmDone:
       "Megjelölöd ezt a feladatot késznek? A worker foglalása felszabadul, és a függő gyermekek ready állapotba kerülnek.",
@@ -783,5 +791,6 @@ export const hu: Translations = {
       "munkaterület útvonala (opcionális, üresen a felelősből származtatva)",
     logTruncated: "(az utolsó 100 KB látható — teljes napló: ",
     logAt: ")",
+    clearFilters: "Clear filters",
   },
 };

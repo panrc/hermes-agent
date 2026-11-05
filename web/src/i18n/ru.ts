@@ -79,6 +79,12 @@ export const ru: Translations = {
       plugins: "Плагины",
       sessions: "Сессии",
       skills: "Навыки",
+      files: "Files",
+      channels: "Channels",
+      webhooks: "Webhooks",
+      pairing: "Pairing",
+      mcp: "MCP",
+      system: "System",
     },
     modelToolsSheetSubtitle: "и инструменты",
     modelToolsSheetTitle: "Модель",
@@ -749,6 +755,7 @@ export const ru: Translations = {
       blocked: "Заблокировано",
       done: "Готово",
       archived: "В архиве",
+      review: "Review",
     },
     columnHelp: {
       triage: "Сырые идеи — specifier подготовит спецификацию",
@@ -759,6 +766,7 @@ export const ru: Translations = {
       blocked: "Воркер запросил вмешательство человека",
       done: "Завершено",
       archived: "В архиве",
+      review: "Implementation complete — awaiting review",
     },
     confirmDone:
       "Отметить эту задачу как выполненную? Захват воркера будет освобождён, а зависимые потомки станут готовыми.",
@@ -783,5 +791,6 @@ export const ru: Translations = {
       "путь к рабочей области (необязательно, выводится из исполнителя, если не указан)",
     logTruncated: "(показаны последние 100 KB — полный журнал в ",
     logAt: ")",
+    clearFilters: "Clear filters",
   },
 };

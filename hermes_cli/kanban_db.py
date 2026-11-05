@@ -287,6 +287,36 @@ DEFAULT_CLAIM_TTL_SECONDS = 15 * 60
 # #31752, so any genuinely active worker keeps its heartbeat fresh as a side effect of normal API traffic.
 DEFAULT_CLAIM_HEARTBEAT_MAX_STALE_SECONDS = 60 * 60
 
+
+def stale_heartbeat_max_seconds() -> int:
+    """Effective heartbeat backstop for a live-but-silent worker.
+
+    Precedence: ``HERMES_KANBAN_HEARTBEAT_MAX_STALE_SECONDS`` > ``kanban.heartbeat_max_stale_seconds``
+    > the 1 h default. A long single tool call (backtest, build, download) or a hung provider
+    request produces no ``_touch_activity``, so this backstop decides whether such a worker is
+    reclaimed mid-flight. The config key is re-read on every call, so raising it lands on the next
+    dispatcher tick without restarting the gateway.
+    """
+    if os.environ.get("HERMES_KANBAN_HEARTBEAT_MAX_STALE_SECONDS"):
+        return _env_int(
+            "HERMES_KANBAN_HEARTBEAT_MAX_STALE_SECONDS", DEFAULT_CLAIM_HEARTBEAT_MAX_STALE_SECONDS, minimum=1
+        )
+    configured = None
+    try:
+        from hermes_cli.config import load_config_readonly
+
+        configured = (load_config_readonly() or {}).get("kanban", {}).get("heartbeat_max_stale_seconds")
+    except Exception:
+        configured = None
+    if configured is not None:
+        try:
+            value = int(configured)
+        except (TypeError, ValueError):
+            value = 0
+        if value >= 1:
+            return value
+    return DEFAULT_CLAIM_HEARTBEAT_MAX_STALE_SECONDS
+
 # Grace when a host-local worker survived termination (e.g. parked in D state
 # under memory.high, SIGKILL pending): releasing now would spawn a duplicate.
 RECLAIM_DEFER_GRACE_SECONDS = 120
@@ -2360,7 +2390,7 @@ def release_stale_claims(
         hb = _to_epoch(row["last_heartbeat_at"])
         # Backstop: a heartbeat older than the max-stale threshold means no
         # observable progress — reclaim even if the PID is alive (logic loop).
-        heartbeat_stale = hb is not None and (now - hb) > DEFAULT_CLAIM_HEARTBEAT_MAX_STALE_SECONDS
+        heartbeat_stale = hb is not None and (now - hb) > stale_heartbeat_max_seconds()
         started_at = _row_get(row, "worker_started_at")
         if (host_local and row["worker_pid"] and _worker_alive(row["worker_pid"], started_at)
                 and not heartbeat_stale):

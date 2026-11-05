@@ -77,6 +77,22 @@ def call_off_event_loop(fn, *args, **kwargs):
         return pool.submit(context.run, fn, *args, **kwargs).result()
 
 
+def _owner_reply_timeout_seconds() -> float:
+    """Seconds a managed worker waits for the owner to answer one RPC.
+
+    The owner runs every other profile's turn, the cron scheduler and the platform adapters on one
+    event loop, so a 20 s ceiling turned ordinary contention into ``worker_receipt_timeout``: the
+    turn aborted as ``session_persistence_failed`` ("No reply: Hermes couldn't save this
+    conversation"), the worker exited 1 and the run was booked ``crashed``. The wait is bounded and
+    a timed-out call is never resent, so a longer ceiling only costs a genuinely stuck worker the
+    extra seconds before the same error.
+    """
+    try:
+        return max(1.0, float(os.environ.get("HERMES_WORKER_RECEIPT_TIMEOUT_S") or 60))
+    except ValueError:
+        return 60.0
+
+
 class _OwnerLink:
     """One owner WebSocket and the only thread that reads it. Events the owner broadcasts to every
     transport are discarded as they arrive, idle or not: left queued, websockets' bounded receive
@@ -194,7 +210,7 @@ class WorkerRPC:
                     self._drop()
                     link = self._connection()
                     link.send(request_id, message)
-                response = link.receive(20)
+                response = link.receive(_owner_reply_timeout_seconds())
             except BaseException:
                 # Outcome unknown once sent: surface the error and never resend; the next call redials.
                 self._drop()

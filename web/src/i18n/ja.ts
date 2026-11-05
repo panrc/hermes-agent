@@ -79,6 +79,12 @@ export const ja: Translations = {
       plugins: "プラグイン",
       sessions: "セッション",
       skills: "スキル",
+      files: "Files",
+      channels: "Channels",
+      webhooks: "Webhooks",
+      pairing: "Pairing",
+      mcp: "MCP",
+      system: "System",
     },
     modelToolsSheetSubtitle: "とツール",
     modelToolsSheetTitle: "モデル",
@@ -748,6 +754,7 @@ export const ja: Translations = {
       blocked: "ブロック中",
       done: "完了",
       archived: "アーカイブ済み",
+      review: "Review",
     },
     columnHelp: {
       triage: "未整理のアイデア — スペシファイアが仕様を肉付けします",
@@ -758,6 +765,7 @@ export const ja: Translations = {
       blocked: "ワーカーが人間の入力を求めています",
       done: "完了",
       archived: "アーカイブ済み",
+      review: "Implementation complete — awaiting review",
     },
     confirmDone:
       "このタスクを完了にしますか？ワーカーの取得は解放され、依存している子タスクが ready になります。",
@@ -782,5 +790,6 @@ export const ja: Translations = {
       "ワークスペースのパス（任意、空の場合は担当者から導出）",
     logTruncated: "（最後の 100 KB を表示中 — 完全なログは ",
     logAt: "）",
+    clearFilters: "Clear filters",
   },
 };

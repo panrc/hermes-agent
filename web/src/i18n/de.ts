@@ -79,6 +79,12 @@ export const de: Translations = {
       plugins: "Plugins",
       sessions: "Sitzungen",
       skills: "Skills",
+      files: "Files",
+      channels: "Channels",
+      webhooks: "Webhooks",
+      pairing: "Pairing",
+      mcp: "MCP",
+      system: "System",
     },
     modelToolsSheetSubtitle: "& Werkzeuge",
     modelToolsSheetTitle: "Modell",
@@ -748,6 +754,7 @@ export const de: Translations = {
       blocked: "Blockiert",
       done: "Erledigt",
       archived: "Archiviert",
+      review: "Review",
     },
     columnHelp: {
       triage: "Rohe Ideen — ein Specifier wird die Spezifikation ausarbeiten",
@@ -758,6 +765,7 @@ export const de: Translations = {
       blocked: "Worker hat um menschliche Eingabe gebeten",
       done: "Abgeschlossen",
       archived: "Archiviert",
+      review: "Implementation complete — awaiting review",
     },
     confirmDone:
       "Diese Aufgabe als erledigt markieren? Der Anspruch des Workers wird freigegeben und abhängige untergeordnete Aufgaben werden bereit.",
@@ -782,5 +790,6 @@ export const de: Translations = {
       "Arbeitsbereichs-Pfad (optional, wird aus zuständiger Person abgeleitet, wenn leer)",
     logTruncated: "(zeige die letzten 100 KB — vollständiges Log unter ",
     logAt: ")",
+    clearFilters: "Clear filters",
   },
 };

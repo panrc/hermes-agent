@@ -16,7 +16,241 @@
   if (!SDK) return;
 
   const { React } = SDK;
-  const h = React.createElement;
+  /* [zh-i18n-overlay] 由 ~/.hermes/scripts/patch_zh_i18n.py 生成：把 bundle 里写死的英文在渲染时翻成中文 */
+  // 只翻「已知英文 UI 串」；任务标题、profile 名、路径等用户数据原样透传。
+  const __ZH_TEXT = {
+    "Select all tasks in this column": "选中此列全部任务",
+    "Fuzzy-match tasks by id, title, or description. Matches across all columns.": "按 id、标题或描述模糊匹配任务，跨所有列生效。",
+    "Tenants are free-form tags on a task (e.g. customer, project, team). Set them via the task drawer or kanban_create.": "租户是任务上的自由标签（例如客户、项目、团队）。可在任务抽屉或 kanban_create 里设置。",
+    "Filter by assigned Hermes profile. Profiles are the named agent identities that claim and work on tasks.": "按指派的 Hermes 配置筛选。配置就是认领并执行任务的具名 agent 身份。",
+    "Include archived tasks in the board view. Archived tasks are hidden by default.": "在看板视图中包含已归档任务。已归档任务默认隐藏。",
+    "Group the Running column by assigned profile": "按指派配置给「进行中」列分组",
+    "Wake the dispatcher to claim ready tasks now instead of waiting for the next tick. Use this after adding tasks if you want them picked up immediately.": "立即唤醒调度器认领就绪任务，不必等下一个 tick。新增任务后想让它们马上被接手就用这个。",
+    "Reload the board from the database. The board auto-refreshes on task events; this is for forcing a re-read.": "从数据库重新读取看板。看板会随任务事件自动刷新；这里用于强制重读。",
+    "Create a new board. Useful when you want an unrelated work stream (different project, different team, isolated scratch area).": "新建看板。适合隔离互不相关的工作流（不同项目、不同团队、独立暂存区）。",
+    "Orchestration: Auto — the dispatcher decomposes new triage tasks automatically every tick. Click to switch to Manual (pre-PR behavior).": "编排：自动 —— 调度器每个 tick 自动拆解新的待分类任务。点击切换到手动（旧行为）。",
+    "Orchestration: Manual — triage tasks stay in triage until you click ⚗ Decompose on each card. Click to switch to Auto.": "编排：手动 —— 待分类任务会停在待分类，直到你在每张卡上点 ⚗ 拆解。点击切换到自动。",
+    "Configure the kanban orchestrator (profile picker, default assignee, auto-decompose, profile descriptions)": "配置看板编排器（配置选择、默认负责人、自动拆解、配置说明）",
+    "Switch kanban board": "切换看板",
+    "Boards are independent work streams. Each board has its own tasks, tenants, and assignees.": "看板是互相独立的工作流。每块看板有自己的任务、租户和负责人。",
+    "Boards let you separate unrelated streams of work": "看板让你把互不相关的工作流分开",
+    "Hide until next page reload": "隐藏到下次刷新页面",
+    "Drag a card here to permanently delete it": "把卡片拖到这里永久删除",
+    "Trash": "回收站",
+    "Refresh log": "刷新日志",
+    "refresh": "刷新",
+    "(empty)": "（空）",
+    "Edit description": "编辑描述",
+    "Select all visible": "全选可见",
+    "Reclaim first": "先释放认领",
+    "Block": "阻塞",
+    "Unblock": "解除阻塞",
+    "⚗ Auto": "⚗ 自动",
+    "Save": "保存",
+    "(default)": "（默认）",
+    "auto — review": "自动 — 待复核",
+    "⚠ no description": "⚠ 无说明",
+    "No profiles installed.": "还没有安装任何配置。",
+    "Auto-decompose triage tasks": "自动拆解待分类任务",
+    "The dispatcher decomposes new triage tasks automatically.": "调度器会自动拆解新的待分类任务。",
+    "Triage tasks stay in triage until you click ⚗ Decompose.": "待分类任务会一直停在待分类，直到你点 ⚗ 拆解。",
+    "Profile descriptions": "配置说明",
+    "Descriptions guide the decomposer's routing. Click ⚗ to auto-generate, or edit and save.": "说明会指导拆解器的路由。点 ⚗ 可自动生成，也可以直接编辑后保存。",
+    "Orchestrator profile": "编排器配置",
+    "Default assignee": "默认负责人",
+    "Reload": "重新加载",
+    "Owns the root task after fan-out (wakes back up to judge completion). Does not drive how tasks split — configure the decomposer model under auxiliary.kanban_decomposer.": "拆分后持有根任务（会重新唤醒以判定完成）。不决定任务如何拆分 —— 拆解模型在 auxiliary.kanban_decomposer 里配置。",
+    "Save the description above as user-authored": "把上面的说明保存为用户撰写",
+    "Auto-generate a description from this profile's skills and model": "根据这个配置的技能和模型自动生成说明",
+    "What is this profile good at?": "这个配置擅长什么？",
+    "What goes on this board?": "这块看板放什么？",
+    "pri": "优先级",
+    "+ parent": "+ 父任务",
+    "+ child": "+ 子任务",
+    "Hermes profile that will spec this task (default: the dispatcher's configured specifier). Leave blank to let the dispatcher pick.": "负责规范化此任务的 Hermes 配置（默认用调度器配置的 specifier）。留空则由调度器挑选。",
+    "Hermes profile to assign. Leave blank and the dispatcher will pick from available profiles when the task is Ready.": "要指派的 Hermes 配置。留空时，任务进入就绪后由调度器从可用配置中挑选。",
+    "Priority. Higher-priority tasks are claimed first by the dispatcher. 0 = default.": "优先级。调度器优先认领优先级更高的任务。0 = 默认。",
+    "Force-load these skills into the worker (in addition to the built-in kanban-worker).": "强制把这些技能加载进 worker（内置 kanban-worker 之外再加）。",
+    "Choose whether task files are temporary or preserved after completion.": "选择任务文件是临时的，还是完成后保留。",
+    "Optional parent task. A child stays blocked in its current column until the parent is marked done.": "可选父任务。父任务标记完成前，子任务会一直阻塞在当前列。",
+    "Turn budget for the goal loop. Blank = backend default (1000).": "目标循环的轮次上限。留空 = 后端默认（1000）。",
+    "Goal mode: the worker keeps going in the same session until a judge agrees the card is done (or the turn budget runs out, which blocks it for review). Best for open-ended cards one shot rarely finishes.": "目标模式：worker 会在同一会话里一直推进，直到裁判判定卡片已完成（或轮次预算耗尽，那时会阻塞等待评审）。适合一次很难做完的开放式卡片。",
+    "No profile assigned.": "未指派配置",
+    "Copy this command:": "复制这个命令：",
+    "Settings saved.": "设置已保存。",
+    "Open Hermes Kanban docs in a new tab": "在新标签页打开看板文档",
+    "Hermes Kanban documentation": "Hermes 看板文档",
+    "Click to open for details.": "点击查看详情。",
+    "unknown error": "未知错误",
+    "(optional)": "（可选）",
+    "Move selected tasks to Todo.": "把选中任务移到待办。",
+    "Move selected tasks to Ready. Ready tasks are picked up by the dispatcher on the next tick.": "把选中任务移到就绪。就绪任务会在下一个 tick 被调度器接手。",
+    "Block selected tasks. Releases any active claims.": "阻塞选中任务，并释放已持有的认领。",
+    "Unblock selected tasks (promote to Ready).": "解除选中任务的阻塞（提升为就绪）。",
+    "Mark selected tasks as done. Releases any claims and unblocks dependent children. You'll be asked for a completion summary.": "把选中任务标记为完成：释放认领并解除依赖子任务的阻塞，随后需要填写完成摘要。",
+    "Archive selected tasks. They disappear from the default board view but remain in the database.": "归档选中任务：从默认看板视图消失，但仍留在数据库里。",
+    "Permanently delete selected tasks. This cannot be undone.": "永久删除选中任务，此操作不可撤销。",
+    "Set priority on selected tasks. Higher = claimed first.": "设置选中任务的优先级。数字越大越先被认领。",
+    "Reassign selected tasks to a different Hermes profile. Pick a profile (or unassign) and click Apply.": "把选中任务改派给另一个 Hermes 配置。选一个配置（或取消指派）后点应用。",
+    "Apply the selected assignee to all selected tasks.": "把选中的负责人应用到所有选中任务。",
+    "Reclaim any active claims before reassigning": "改派前先释放已有认领",
+    "Select all visible cards across columns.": "选中所有列中可见的卡片。",
+    "Deselect all tasks and hide this bar.": "取消全部选择并隐藏此栏。",
+    "→ triage": "→ 待分类",
+    "→ todo": "→ 待办",
+    "✨ Specify": "✨ 规范化",
+    "Specifying…": "规范化中…",
+    "⚗ Decompose": "⚗ 拆解",
+    "Decomposing…": "拆解中…",
+    "scratch": "临时目录",
+    "dir": "目录",
+    "worktree": "Git worktree",
+    "→ ready": "→ 就绪",
+    "— reassign —": "— 改派 —",
+    "⚠ Completion blocked — phantom card ids": "⚠ 完成受阻 —— 幻影卡片 id",
+    "⚠ Prose referenced phantom card ids": "⚠ 正文引用了幻影卡片 id",
+    "Permanently delete this task? This cannot be undone.": "永久删除此任务？此操作不可撤销。",
+    "Metadata": "元数据",
+    "heartbeat": "心跳",
+    "worker_bound": "工作者绑定",
+    "owner_admitted": "会话接管",
+    "spawned": "已启动",
+    "claimed": "已认领",
+    "status": "状态变更",
+    "commented": "有评论",
+    "worker_result": "工作者结果",
+    "completed": "已完成",
+    "moved": "已移动",
+    "created": "已创建",
+    "reassigned": "已改派",
+    "reclaimed": "已回收",
+    "archived": "已归档",
+    "unblocked": "已解除阻塞",
+    "blocked": "已阻塞",
+    "summarized": "已总结",
+    "dispatched": "已派发",
+    "decomposed": "已拆解",
+    "review_requested": "已请求评审",
+    "dependency_done": "依赖已完成",
+    "terminated": "已终止",
+    "goal_created": "已建目标",
+    "goal_turn": "目标轮次",
+    "profile_bound": "已绑定配置",
+    "resumed": "已恢复",
+    "updated": "已更新",
+    "edited": "已编辑",
+    "specified": "已规范",
+    "failed": "失败",
+    "timed_out": "已超时",
+    "gave_up": "已放弃",
+    "interrupted": "已中断"
+  };
+  const __ZH_RULES = [
+    [new RegExp("^Task id: (t_[0-9a-f]+)\\. Use this id with kanban_show, /kanban show, or hermes kanban show\\.$"), "任务 id：$1。可在 kanban_show、/kanban show 或 hermes kanban show 中使用。"],
+    [new RegExp("^Priority (\\d+)\\. Higher-priority tasks are claimed first by the dispatcher\\.$"), "优先级 $1。调度器优先认领优先级更高的任务。"],
+    [new RegExp("^Tenant: (.*)\\. Free-form tag for grouping tasks \\(customer, project, team\\)\\.$"), "租户：$1。用于给任务分组的自由标签（客户、项目、团队）。"],
+    [new RegExp("^Assigned to Hermes profile @(.+)$"), "指派给 Hermes 配置 @$1"],
+    [new RegExp("^(\\d+) comments? on this task$"), "此任务有 $1 条评论"],
+    [new RegExp("^(\\d+) parent(s)?, (\\d+) child(ren)?\\. Children stay blocked until their parent is done\\.$"), "$1 个父任务、$3 个子任务。父任务完成前，子任务保持阻塞。"],
+    [new RegExp("^(\\d+) of (\\d+) child tasks done$"), "子任务已完成 $1 / $2"],
+    [new RegExp("^(\\d+) active diagnostics?(.*)$"), "$1 条活跃诊断$2"],
+    [new RegExp("^(\\d+) tasks? in this column$"), "此列 $1 个任务"],
+    [new RegExp("^(\\d+) tasks?$"), "$1 个任务"],
+    [new RegExp("^Select all tasks in (.+)$"), "选中「$1」列全部任务"],
+    [new RegExp("^Select task (.+)$"), "选择任务 $1"],
+    [new RegExp("^Block (\\d+) task\\(s\\)\\?$"), "阻塞 $1 个任务？"],
+    [new RegExp("^Unblock (\\d+) task\\(s\\)\\?$"), "解除阻塞 $1 个任务？"],
+    [new RegExp("^Created (\\d+)$"), "创建于 $1"],
+    [new RegExp("^dir: (.*)$"), "目录：$1"],
+    [new RegExp("^worktree: (.*)$"), "Git worktree：$1"],
+    [new RegExp("^scratch: (.*)$"), "临时目录：$1"],
+    [new RegExp("^on \\(max (\\d+) turns\\)$"), "开启（最多 $1 轮）"],
+    [new RegExp("^on$"), "开启"],
+    [new RegExp("^Resolved: (.*)$"), "生效：$1"],
+    [new RegExp("^\\(default: (.*)\\)$"), "（默认：$1）"],
+    [new RegExp("^(.*) \\(severity: (.*)\\)\\. Click to open for details\\.$"), "$1（严重度：$2）。点击查看详情。"],
+    [new RegExp("^Save failed: (.*)$"), "保存失败：$1"],
+    [new RegExp("^Failed to load: (.*)$"), "加载失败：$1"],
+    [new RegExp("^Auto-generate failed: (.*)$"), "自动生成失败：$1"],
+    [new RegExp("^Decompose failed: (.*)$"), "拆解失败：$1"],
+    [new RegExp("^Specify failed: (.*)$"), "规范化失败：$1"],
+    [new RegExp("^Kanban plugin crashed(.*)$"), "看板插件崩溃$1"],
+    [new RegExp("^Description saved for (.+)\\.$"), "已保存 $1 的说明。"],
+    [new RegExp("^Auto-generated description for (.+)\\.$"), "已为 $1 自动生成说明。"],
+    [new RegExp("^Bulk move: (\\d+) of (\\d+) failed$"), "批量移动：$1 / $2 失败"],
+    [new RegExp("^Move failed: (.*)$"), "移动失败：$1"],
+    [new RegExp("^Decomposed into (\\d+) children: (.*)$"), "已拆成 $1 个子任务：$2"],
+    [new RegExp("^Single task \\(no fanout\\)(.*)$"), "单个任务（不拆分）$1"],
+    [new RegExp("^\\+(\\d+) earlier$"), "+$1 条更早"],
+    [new RegExp("^Specified(.*)$"), "已规范化$1"],
+    [new RegExp("^(.*) — retitled: (.*)$"), "$1 —— 已重命名为：$2"]
+  ];
+  function __zhOn() {
+    // 只在中文 UI 下覆盖：切到英文时 bundle 里的英文原文要原样输出（否则反向泄漏）
+    try {
+      const l = localStorage.getItem("hermes-locale");
+      if (l === "zh" || l === "zh-hant") return true;
+      if (l) return false;
+    } catch (e) { /* ignore */ }
+    return (document.documentElement.getAttribute("lang") || "").toLowerCase().indexOf("zh") === 0;
+  }
+  function __zhText(s) {
+    if (typeof s !== "string" || !s) return s;
+    if (!__zhOn()) return s;
+    const k = s.trim();
+    if (!k) return s;
+    if (Object.prototype.hasOwnProperty.call(__ZH_TEXT, k)) {
+      return s.replace(k, __ZH_TEXT[k]);
+    }
+    for (let i = 0; i < __ZH_RULES.length; i++) {
+      if (__ZH_RULES[i][0].test(k)) return k.replace(__ZH_RULES[i][0], __ZH_RULES[i][1]);
+    }
+    return s;
+  }
+  function __zhProps(props) {
+    let out = props;
+    let copied = false;
+    const attrs = ["title", "placeholder", "aria-label"];
+    for (let i = 0; i < attrs.length; i++) {
+      const key = attrs[i];
+      if (typeof props[key] !== "string") continue;
+      const v = __zhText(props[key]);
+      if (v === props[key]) continue;
+      if (!copied) { out = Object.assign({}, props); copied = true; }
+      out[key] = v;
+    }
+    return out;
+  }
+  const h = function (type, props) {
+    const kids = [];
+    for (let i = 2; i < arguments.length; i++) {
+      const k = arguments[i];
+      if (typeof k === "string") {
+        kids.push(__zhText(k));
+      } else if (Array.isArray(k)) {
+        kids.push(k.map(function (x) { return typeof x === "string" ? __zhText(x) : x; }));
+      } else {
+        kids.push(k);
+      }
+    }
+    return React.createElement.apply(null, [type, props ? __zhProps(props) : props].concat(kids));
+  };
+  // 诊断 / 事件 kind 的显示名（技术标识 → 中文；未知的保持原样）
+  const __ZH_KINDS = {
+    "hallucinated_cards": "幻影卡片",
+    "prose_phantom_refs": "正文引用幻影卡",
+    "triage_aux_unavailable": "缺少辅助模型",
+    "repeated_failures": "反复失败",
+    "repeated_crashes": "反复崩溃",
+    "review_dependency_deadlock": "评审依赖死锁",
+    "running_with_open_parents": "父任务未完成却在跑",
+    "stuck_in_blocked": "长时间阻塞",
+    "block_unblock_cycling": "阻塞/解阻塞来回切",
+    "stranded_in_ready": "就绪但无人认领",
+    "stale_running": "运行中但认领已过期"
+  };
+  function __zhKind(k) { return Object.prototype.hasOwnProperty.call(__ZH_KINDS, k) ? __ZH_KINDS[k] : k; }
+  /* [zh-i18n-overlay-end] */
   const {
     Card, CardContent,
     Badge, Button, Input, Label, Select, SelectOption,
@@ -252,6 +486,7 @@
         confirmLabel: dialogState.confirmLabel || (dialogState.kind === "completion"
           ? tx(t, "confirm", "Confirm")
           : tx(t, "ok", "OK")),
+        cancelLabel: tx(t, "common.cancel", "Cancel"),
         destructive: !!dialogState.destructive,
         onConfirm: function () { onConfirm(); },
         onCancel: onCancel,
@@ -376,10 +611,29 @@
     const lines = escaped.split(/\r?\n/);
     const out = [];
     let inList = false;
+    // Consecutive ">" lines accumulate here and merge into one <blockquote>.
+    let quote = null;
+    const flushQuote = () => {
+      if (quote) {
+        out.push(
+          `<blockquote class="hermes-kanban-md-quote">${quote.join("<br>")}</blockquote>`,
+        );
+        quote = null;
+      }
+    };
     for (const raw of lines) {
       const line = raw;
+      // ">" is already escaped to "&gt;" at this point.
+      const quoted = /^\s*&gt;[ \t]?(.*)$/.exec(line);
       const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
       const heading = /^(#{1,4})\s+(.*)$/.exec(line);
+      if (quoted) {
+        if (inList) { out.push("</ul>"); inList = false; }
+        if (!quote) quote = [];
+        quote.push(renderInline(quoted[1].replace(/\s+$/, "")));
+        continue;
+      }
+      flushQuote();
       if (bullet) {
         if (!inList) { out.push("<ul>"); inList = true; }
         out.push(`<li>${renderInline(bullet[1])}</li>`);
@@ -389,12 +643,17 @@
       if (heading) {
         const level = heading[1].length;
         out.push(`<h${level}>${renderInline(heading[2])}</h${level}>`);
+      } else if (/^\u0000CODE\d+\u0000$/.test(line.trim())) {
+        // Fenced-code placeholder must stay a block-level sibling: wrapping
+        // it in <p> would produce the illegal <p><pre>…</pre></p> nesting.
+        out.push(line.trim());
       } else if (line.trim() === "") {
         out.push("");
       } else {
         out.push(`<p>${renderInline(line)}</p>`);
       }
     }
+    flushQuote();
     if (inList) out.push("</ul>");
     let html = out.join("\n");
     // Re-insert fenced code blocks.
@@ -405,6 +664,8 @@
   }
   const MARKDOWN_ALLOWED_TAGS = new Set([
     "a",
+    "blockquote",
+    "br",
     "code",
     "em",
     "h1",
@@ -431,6 +692,9 @@
     }
     if (tag === "pre" && /\sclass=(["'])hermes-kanban-md-code\1/i.test(attrs)) {
       return ' class="hermes-kanban-md-code"';
+    }
+    if (tag === "blockquote" && /\sclass=(["'])hermes-kanban-md-quote\1/i.test(attrs)) {
+      return ' class="hermes-kanban-md-quote"';
     }
     return "";
   }
@@ -1476,7 +1740,7 @@
                 h("span", { className: "hermes-kanban-attention-row-meta" },
                   task.assignee ? "@" + task.assignee : tx(t, "unassigned", "unassigned"),
                   " \u00b7 ",
-                  kinds.length > 0 ? kinds.join(", ") : tx(t, "diagnostic", "diagnostic"),
+                  kinds.length > 0 ? kinds.map(__zhKind).join(", ") : tx(t, "diagnostic", "diagnostic"),
                 ),
                 h("button", {
                   className: "hermes-kanban-attention-row-btn",
@@ -1576,7 +1840,7 @@
           // Documented carve-out — see issue #50547 followups for the
           // dedicated copyFallback dialog body that will replace this
           // once ConfirmDialog grows a `disabled` prop upstream.
-          window.prompt("Copy this command:", cmd);
+          window.prompt(tx(t, "copyCommandPrompt", "Copy this command:"), cmd);
         };
         try {
           const p = navigator.clipboard && navigator.clipboard.writeText(cmd);
@@ -1818,6 +2082,7 @@
   // ---------------------------------------------------------------------
 
   function OrchestrationPanel() {
+    const { t } = useI18n();
     const [expanded, setExpanded] = useState(false);
     const [settings, setSettings] = useState(null);
     const [profiles, setProfiles] = useState([]);
@@ -1902,8 +2167,8 @@
     };
 
     const headerLabel = expanded
-      ? "▾ Orchestration settings"
-      : "▸ Orchestration settings";
+      ? "▾ " + tx(t, "orchestrationSettings", "Orchestration settings")
+      : "▸ " + tx(t, "orchestrationSettings", "Orchestration settings");
 
     // Mode pill — always visible (collapsed or expanded). One click flips
     // between Auto and Manual. Auto = dispatcher decomposes new triage tasks
@@ -1912,7 +2177,7 @@
     // stay in triage until then.
     const autoOn = !!(settings && settings.auto_decompose);
     const modePillTitle = settings === null
-      ? "Loading mode…"
+      ? tx(t, "loadingMode", "Loading mode…")
       : (autoOn
           ? "Orchestration: Auto — the dispatcher decomposes new triage tasks automatically every tick. Click to switch to Manual (pre-PR behavior)."
           : "Orchestration: Manual — triage tasks stay in triage until you click ⚗ Decompose on each card. Click to switch to Auto.");
@@ -1930,9 +2195,11 @@
                     ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
                     : "border-muted-foreground/30 bg-muted/30 text-muted-foreground"),
     },
-      "Orchestration: ",
+      tx(t, "orchestrationMode", "Orchestration: "),
       h("span", { className: "ml-1 font-semibold" },
-        settings === null ? "…" : (autoOn ? "Auto" : "Manual"))
+        settings === null ? "…" : (autoOn
+        ? tx(t, "autoMode", "Auto")
+        : tx(t, "manualMode", "Manual")))
     );
 
     if (!expanded) {
@@ -2004,7 +2271,7 @@
           ),
           h("div", { className: "flex flex-col gap-1" },
             h(Label, { className: "text-xs text-muted-foreground" },
-              "Orchestration mode"),
+              tx(t, "orchestrationModeLabel", "Orchestration mode")),
             h("label", { className: "flex items-center gap-2 text-xs h-8" },
               h(Checkbox, {
                 checked: !!settings.auto_decompose,
@@ -2616,7 +2883,7 @@
           props.setIncludeArchived(false);
         },
         size: "sm",
-        title: "Clear all active filters (search, tenant, assignee, archived).",
+        title: tx(t, "clearFiltersTooltip", "Clear all active filters (search, tenant, assignee, archived)."),
       }, tx(t, "clearFilters", "Clear filters")),
     );
   }
@@ -2645,13 +2912,13 @@
       }, "→ ready"),
       h(Button, {
         onClick: function () { props.onApply({ status: "blocked" },
-          `Block ${props.count} task(s)?`); },
+          tx(t, "blockMany", "Block {n} task(s)?", { n: props.count })); },
         size: "sm",
         title: "Block selected tasks. Releases any active claims.",
       }, "Block"),
       h(Button, {
         onClick: function () { props.onApply({ status: "ready" },
-          `Unblock ${props.count} task(s)?`); },
+          tx(t, "unblockMany", "Unblock {n} task(s)?", { n: props.count })); },
         size: "sm",
         title: "Unblock selected tasks (promote to Ready).",
       }, "Unblock"),
@@ -3493,7 +3760,7 @@
               type: "number",
               value: goalMaxTurns,
               onChange: function (e) { setGoalMaxTurns(e.target.value); },
-              placeholder: tx(t, "goalMaxTurns", "max turns (default 20)"),
+              placeholder: tx(t, "goalMaxTurns", "max turns (default 1000)"),
               className: "h-8 text-sm w-44",
               title: "Turn budget for the goal loop. Blank = backend default (20).",
               min: 1,
@@ -3531,6 +3798,11 @@
     // Ready/Block/Complete buttons feel like no-ops.  See #26744.
     const [patchErr, setPatchErr] = useState(null);
     const [newComment, setNewComment] = useState("");
+    // 评论配图/附件：先在本地挂起，点「评论」时按顺序上传拿到 attachment id，
+    // 再带着 attachment_ids 调 POST /comments，气泡里就能显示图片。
+    const [commentFiles, setCommentFiles] = useState([]);
+    const [commentBusy, setCommentBusy] = useState(false);
+    const commentFileRef = useRef(null);
     const [uploadBusy, setUploadBusy] = useState(false);
     const [uploadErr, setUploadErr] = useState(null);
     const [editing, setEditing] = useState(false);
@@ -3567,18 +3839,48 @@
       return function () { window.removeEventListener("keydown", onKey); };
     }, [props.onClose, editing]);
 
+    const uploadCommentFile = function (file) {
+      const url = withBoard(`${API}/tasks/${encodeURIComponent(props.taskId)}/attachments`, boardSlug);
+      const fd = new FormData();
+      fd.append("file", file, file.name || "image.png");
+      return SDK.authedFetch(url, { method: "POST", body: fd }).then(function (resp) {
+        if (!resp.ok) {
+          return resp.text().then(function (txt) {
+            throw new Error(parseApiErrorMessage(new Error(resp.status + ": " + txt)));
+          });
+        }
+        return resp.json().then(function (d) {
+          return d && d.attachment ? d.attachment.id : null;
+        });
+      });
+    };
+
     const handleComment = function () {
       const body = newComment.trim();
-      if (!body) return;
-      SDK.fetchJSON(withBoard(`${API}/tasks/${encodeURIComponent(props.taskId)}/comments`, boardSlug), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body }),
+      const files = commentFiles.slice();
+      if ((!body && !files.length) || commentBusy) return;
+      setCommentBusy(true);
+      setErr(null);
+      const ids = [];
+      let chain = Promise.resolve();
+      files.forEach(function (f) {
+        chain = chain.then(function () {
+          return uploadCommentFile(f).then(function (id) { if (id) ids.push(id); });
+        });
+      });
+      chain.then(function () {
+        return SDK.fetchJSON(withBoard(`${API}/tasks/${encodeURIComponent(props.taskId)}/comments`, boardSlug), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ body: body || "（图片/附件）", attachment_ids: ids }),
+        });
       }).then(function () {
         setNewComment("");
+        setCommentFiles([]);
         load();
         props.onRefresh();
-      }).catch(function (e) { setErr(String(e.message || e)); });
+      }).catch(function (e) { setErr(String(e.message || e)); })
+        .finally(function () { setCommentBusy(false); });
     };
 
     // File upload uses raw fetch (not SDK.fetchJSON, which JSON-encodes)
@@ -3852,7 +4154,34 @@
             tx(t, "commentHint",
               "Comments reach the worker on its next run or kanban_show() — no need to block the task first."),
           ),
+          h(CommentDraftChips, {
+            files: commentFiles,
+            onRemove: function (i) {
+              setCommentFiles(function (prev) {
+                return prev.filter(function (_f, j) { return j !== i; });
+              });
+            },
+          }),
+          h("input", {
+            ref: commentFileRef,
+            type: "file",
+            multiple: true,
+            accept: "image/*,.pdf,.txt,.md,.json,.csv,.log,.zip,.xlsx,.docx,.pptx",
+            style: { display: "none" },
+            onChange: function (e) {
+              const picked = Array.prototype.slice.call(e.target.files || []);
+              if (picked.length) setCommentFiles(function (prev) { return prev.concat(picked); });
+              try { e.target.value = ""; } catch (_e) { /* ignore */ }
+            },
+          }),
           h("div", { className: "hermes-kanban-drawer-comment-row" },
+            h("button", {
+              type: "button",
+              className: "hermes-kanban-comment-attach-btn",
+              title: "添加图片/附件（也可以直接粘贴截图）",
+              disabled: commentBusy,
+              onClick: function () { if (commentFileRef.current) commentFileRef.current.click(); },
+            }, "📎"),
             h(Input, {
               value: newComment,
               onChange: function (e) { setNewComment(e.target.value); },
@@ -3861,13 +4190,23 @@
                   e.preventDefault(); handleComment();
                 }
               },
+              onPaste: function (e) {
+                const dt = e.clipboardData;
+                if (!dt || !dt.files || !dt.files.length) return;
+                const picked = Array.prototype.slice.call(dt.files);
+                e.preventDefault();
+                setCommentFiles(function (prev) { return prev.concat(picked); });
+              },
               placeholder: tx(t, "addComment", "Add a comment… (Enter to submit)"),
               className: "h-8 text-sm flex-1",
             }),
             h(Button, {
               onClick: handleComment,
               size: "sm",
-            }, tx(t, "comment", "Comment")),
+              disabled: commentBusy,
+            }, commentBusy
+                ? tx(t, "sending", "Sending…")
+                : tx(t, "comment", "Comment")),
           ),
         ) : null,
       ),
@@ -3992,6 +4331,140 @@
     );
   }
 
+
+  // -------------------------------------------------------------------------
+  // Comment attachments: images render inline (authed fetch -> blob URL so it
+  // works in both cookie-gated and loopback-token auth modes); other files
+  // render as a download chip. Pairs with the backend comment_attachments
+  // sidecar: POST /tasks/:id/attachments -> ids -> POST comments {attachment_ids}.
+  // -------------------------------------------------------------------------
+
+  function _isImageAttachment(a) {
+    const ct = String((a && a.content_type) || "").toLowerCase();
+    if (ct.indexOf("image/") === 0 && ct.indexOf("svg") === -1) return true;
+    return /\.(png|jpe?g|gif|webp|bmp|heic|heif|avif)$/i.test(String((a && a.filename) || ""));
+  }
+
+  function _useAttachmentObjectUrl(attachment, boardSlug) {
+    const [url, setUrl] = useState(null);
+    const [err, setErr] = useState(null);
+    useEffect(function () {
+      let alive = true;
+      let objUrl = null;
+      SDK.authedFetch(withBoard(`${API}/attachments/${attachment.id}`, boardSlug))
+        .then(function (resp) {
+          if (!resp.ok) throw new Error("HTTP " + resp.status);
+          return resp.blob();
+        })
+        .then(function (blob) {
+          if (!alive) return;
+          objUrl = URL.createObjectURL(blob);
+          setUrl(objUrl);
+        })
+        .catch(function (e) { if (alive) setErr(String(e.message || e)); });
+      return function () {
+        alive = false;
+        if (objUrl) URL.revokeObjectURL(objUrl);
+      };
+    }, [attachment.id, boardSlug]);
+    return [url, err];
+  }
+
+  function CommentAttachmentImage(props) {
+    const a = props.attachment;
+    const pair = _useAttachmentObjectUrl(a, props.boardSlug);
+    const src = pair[0];
+    const err = pair[1];
+    const [zoom, setZoom] = useState(false);
+    if (!src) {
+      return h("span", {
+        className: cn("hermes-kanban-comment-att-img-ph", err && "hermes-kanban-comment-att-img-ph--err"),
+        title: err || a.filename || "",
+      }, err ? "🖼 图片加载失败" : "🖼 图片加载中…");
+    }
+    return h("span", { className: "hermes-kanban-comment-att-img-wrap" },
+      h("img", {
+        className: "hermes-kanban-comment-att-img",
+        src: src,
+        alt: a.filename || "image",
+        title: (a.filename || "") + "（点击放大）",
+        loading: "lazy",
+        onClick: function () { setZoom(true); },
+      }),
+      zoom
+        ? h("div", {
+            className: "hermes-kanban-comment-att-zoom",
+            onClick: function () { setZoom(false); },
+          }, h("img", { src: src, alt: a.filename || "image" }))
+        : null,
+    );
+  }
+
+  function CommentAttachmentFile(props) {
+    const a = props.attachment;
+    const [busy, setBusy] = useState(false);
+    const [err, setErr] = useState(null);
+    const download = function () {
+      setBusy(true);
+      setErr(null);
+      SDK.authedFetch(withBoard(`${API}/attachments/${a.id}`, props.boardSlug))
+        .then(function (resp) {
+          if (!resp.ok) throw new Error("HTTP " + resp.status);
+          return resp.blob();
+        })
+        .then(function (blob) {
+          const objUrl = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = objUrl;
+          link.download = a.filename || "attachment";
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          setTimeout(function () { URL.revokeObjectURL(objUrl); }, 10000);
+        })
+        .catch(function (e) { setErr(String(e.message || e)); })
+        .finally(function () { setBusy(false); });
+    };
+    return h("button", {
+      type: "button",
+      className: "hermes-kanban-comment-att-file",
+      title: err || (a.filename || "attachment"),
+      disabled: busy,
+      onClick: download,
+    }, "📎 " + (a.filename || "attachment") + (a.size ? " · " + _fmtBytes(a.size) : ""));
+  }
+
+  function CommentAttachments(props) {
+    const atts = props.attachments || [];
+    if (!atts.length) return null;
+    return h("div", { className: "hermes-kanban-comment-atts" },
+      atts.map(function (a) {
+        return _isImageAttachment(a)
+          ? h(CommentAttachmentImage, { key: a.id, attachment: a, boardSlug: props.boardSlug })
+          : h(CommentAttachmentFile, { key: a.id, attachment: a, boardSlug: props.boardSlug });
+      }),
+    );
+  }
+
+  function CommentDraftChips(props) {
+    const files = props.files || [];
+    if (!files.length) return null;
+    return h("div", { className: "hermes-kanban-comment-draft" },
+      files.map(function (f, i) {
+        return h("span", { key: i, className: "hermes-kanban-comment-draft-chip", title: f.name },
+          (f.type && f.type.indexOf("image/") === 0 ? "🖼 " : "📎 ") + f.name
+            + (f.size ? " · " + _fmtBytes(f.size) : ""),
+          h("button", {
+            type: "button",
+            className: "hermes-kanban-comment-draft-x",
+            title: "移除",
+            onClick: function () { if (props.onRemove) props.onRemove(i); },
+          }, "×"),
+        );
+      }),
+    );
+  }
+
   function TaskDetail(props) {
     const { t: i18n } = useI18n();
     const t = props.data.task;
@@ -4019,7 +4492,7 @@
             }, t.title || tx(i18n, "untitled", "(untitled)")),
       ),
       h("div", { className: "hermes-kanban-drawer-meta" },
-        h(MetaRow, { label: tx(i18n, "status", "Status"), value: t.status }),
+        h(MetaRow, { label: tx(i18n, "status", "Status"), value: getColumnLabel(i18n, t.status) }),
         h(AssigneeEditor, { task: t, onPatch: props.onPatch }),
         h(PriorityEditor, { task: t, onPatch: props.onPatch }),
         h(ModelEditor, { task: t, onPatch: props.onPatch }),
@@ -4035,7 +4508,7 @@
         t.goal_mode ? h(MetaRow, {
           label: tx(i18n, "goalMode", "Goal mode"),
           value: t.goal_max_turns
-            ? `on (max ${t.goal_max_turns} turns)`
+            ? tx(t, "goalModeOnTurns", "on (max {n} turns)", { n: t.goal_max_turns })
             : "on",
         }) : null,
         t.created_by ? h(MetaRow, { label: tx(i18n, "createdBy", "Created by"), value: t.created_by }) : null,
@@ -4151,6 +4624,7 @@
                     timeAgo ? timeAgo(c.created_at) : ""),
                 ),
                 h(MarkdownBlock, { source: c.body, enabled: props.renderMarkdown }),
+                h(CommentAttachments, { attachments: c.attachments, boardSlug: props.boardSlug }),
               );
             }),
       ),
@@ -4219,9 +4693,9 @@
       if (!run || !run.started_at) return "";
       const end = run.ended_at || Math.floor(Date.now() / 1000);
       const secs = Math.max(0, end - run.started_at);
-      if (secs < 60) return `${secs}s`;
-      if (secs < 3600) return `${Math.round(secs / 60)}m`;
-      return `${(secs / 3600).toFixed(1)}h`;
+      if (secs < 60) return tx(t, "elapsedSeconds", "{n}s", { n: secs });
+      if (secs < 3600) return tx(t, "elapsedMinutes", "{n}m", { n: Math.round(secs / 60) });
+      return tx(t, "elapsedHours", "{n}h", { n: (secs / 3600).toFixed(1) });
     };
 
     return h("div", { className: "hermes-kanban-section" },

@@ -5,6 +5,7 @@ import App from "./App";
 import { ProfileProvider } from "./contexts/ProfileProvider";
 import { SystemActionsProvider } from "./contexts/SystemActions";
 import { I18nProvider } from "./i18n";
+import { startZhDomOverlay } from "./lib/zhDomOverlay";
 import { exposePluginSDK } from "./plugins";
 import { ThemeProvider } from "./themes";
 import { HERMES_BASE_PATH } from "./lib/api";
@@ -12,6 +13,9 @@ import { HERMES_BASE_PATH } from "./lib/api";
 // Expose the plugin SDK before rendering so plugins loaded via <script>
 // can access React, components, etc. immediately.
 exposePluginSDK();
+
+// 未走 i18n 的硬编码英文的渲染层中文补丁（仅中文 locale 生效）
+startZhDomOverlay();
 
 createRoot(document.getElementById("root")!).render(
   <BrowserRouter basename={HERMES_BASE_PATH || undefined}>

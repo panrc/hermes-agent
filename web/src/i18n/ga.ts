@@ -79,6 +79,12 @@ export const ga: Translations = {
       plugins: "Plugins",
       sessions: "Seisiúin",
       skills: "Scileanna",
+      files: "Files",
+      channels: "Channels",
+      webhooks: "Webhooks",
+      pairing: "Pairing",
+      mcp: "MCP",
+      system: "System",
     },
     modelToolsSheetSubtitle: "agus uirlisí",
     modelToolsSheetTitle: "Samhail",
@@ -757,6 +763,7 @@ export const ga: Translations = {
       blocked: "Bactha",
       done: "Críochnaithe",
       archived: "Cartlannaithe",
+      review: "Review",
     },
     columnHelp: {
       triage: "Smaointe amha — déanfaidh specifier an spec a chur i bhfeidhm",
@@ -767,6 +774,7 @@ export const ga: Translations = {
       blocked: "D'iarr an worker ionchur duine",
       done: "Críochnaithe",
       archived: "Cartlannaithe",
+      review: "Implementation complete — awaiting review",
     },
     confirmDone:
       "Marcáil an tasc seo mar críochnaithe? Scaoiltear éileamh an worker agus éiríonn leanaí spleácha ready.",
@@ -791,5 +799,6 @@ export const ga: Translations = {
       "conair workspace (roghnach, díorthaithe ón sannaí má tá sé folamh)",
     logTruncated: "(taispeántar an 100 KB deireanach — loga iomlán ag ",
     logAt: ")",
+    clearFilters: "Clear filters",
   },
 };

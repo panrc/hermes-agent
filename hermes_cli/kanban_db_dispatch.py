@@ -746,7 +746,13 @@ def enforce_max_runtime(conn: sqlite3.Connection, *, signal_fn=None) -> list[str
 
 # A running task with no heartbeat for this long is inactive regardless of
 # ``dispatch_stale_timeout_seconds`` (spec: ">4h started + no commits in 1h").
+# ``HERMES_KANBAN_HEARTBEAT_MAX_STALE_SECONDS`` raises it for hosts that legitimately run one
+# hour-long tool call (backtest, build, download) with no model activity in between.
 _STALE_HEARTBEAT_GAP_SECONDS = 3600
+
+
+def _stale_heartbeat_gap_seconds() -> int:
+    return _kb.stale_heartbeat_max_seconds()
 
 
 def detect_stale_running(
@@ -791,7 +797,7 @@ def detect_stale_running(
 
         last_hb = _kb._to_epoch(row["last_heartbeat_at"])
         hb_age = (now - last_hb) if last_hb is not None else None
-        if hb_age is not None and hb_age < _STALE_HEARTBEAT_GAP_SECONDS:
+        if hb_age is not None and hb_age < _stale_heartbeat_gap_seconds():
             continue
 
         pid = row["worker_pid"]

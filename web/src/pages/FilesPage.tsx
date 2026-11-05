@@ -38,8 +38,9 @@ import { api } from "@/lib/api";
 import type { ManagedFileEntry, ManagedFilesResponse } from "@/lib/api";
 import { PluginSlot } from "@/plugins";
 import { errorMessage } from "@/lib/api-error";
+import { uiLocale } from "@/lib/utils";
 
-const DATE_FORMAT = new Intl.DateTimeFormat(undefined, {
+const DATE_FORMAT = new Intl.DateTimeFormat(uiLocale(), {
   dateStyle: "medium",
   timeStyle: "short",
 });

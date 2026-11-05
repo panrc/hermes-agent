@@ -79,6 +79,12 @@ export const zhHant: Translations = {
       plugins: "外掛管理",
       sessions: "工作階段",
       skills: "技能",
+      files: "Files",
+      channels: "Channels",
+      webhooks: "Webhooks",
+      pairing: "Pairing",
+      mcp: "MCP",
+      system: "System",
     },
     modelToolsSheetSubtitle: "與工具",
     modelToolsSheetTitle: "模型",
@@ -748,6 +754,7 @@ export const zhHant: Translations = {
       blocked: "已封鎖",
       done: "已完成",
       archived: "已封存",
+      review: "Review",
     },
     columnHelp: {
       triage: "原始想法 — 規格制定者將完善規格",
@@ -758,6 +765,7 @@ export const zhHant: Translations = {
       blocked: "工作者請求人工輸入",
       done: "已完成",
       archived: "已封存",
+      review: "Implementation complete — awaiting review",
     },
     confirmDone:
       "將此任務標記為完成？工作者的領取將被釋放，下層相依任務將變為就緒。",
@@ -782,5 +790,6 @@ export const zhHant: Translations = {
       "工作區路徑（選填，留空則依負責人推導）",
     logTruncated: "（顯示最後 100 KB — 完整日誌位於 ",
     logAt: "）",
+    clearFilters: "Clear filters",
   },
 };

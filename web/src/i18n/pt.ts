@@ -79,6 +79,12 @@ export const pt: Translations = {
       plugins: "Plugins",
       sessions: "Sessões",
       skills: "Competências",
+      files: "Files",
+      channels: "Channels",
+      webhooks: "Webhooks",
+      pairing: "Pairing",
+      mcp: "MCP",
+      system: "System",
     },
     modelToolsSheetSubtitle: "e ferramentas",
     modelToolsSheetTitle: "Modelo",
@@ -750,6 +756,7 @@ export const pt: Translations = {
       blocked: "Bloqueado",
       done: "Concluído",
       archived: "Arquivado",
+      review: "Review",
     },
     columnHelp: {
       triage: "Ideias em bruto — um specifier vai detalhar a especificação",
@@ -760,6 +767,7 @@ export const pt: Translations = {
       blocked: "O worker pediu intervenção humana",
       done: "Concluído",
       archived: "Arquivado",
+      review: "Implementation complete — awaiting review",
     },
     confirmDone:
       "Marcar esta tarefa como concluída? A reivindicação do worker é libertada e os filhos dependentes ficam prontos.",
@@ -784,5 +792,6 @@ export const pt: Translations = {
       "caminho do espaço de trabalho (opcional, derivado do responsável se vazio)",
     logTruncated: "(a mostrar os últimos 100 KB — registo completo em ",
     logAt: ")",
+    clearFilters: "Clear filters",
   },
 };
