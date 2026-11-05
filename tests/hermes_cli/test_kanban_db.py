@@ -2082,3 +2082,34 @@ def test_archive_non_running_task_does_not_attempt_termination(kanban_home):
             (t,),
         ).fetchone()
         assert row is None
+
+
+def test_stale_heartbeat_max_seconds_precedence(monkeypatch):
+    """The heartbeat backstop must be configurable: env > kanban.heartbeat_max_stale_seconds > 1 h.
+
+    Heartbeats only advance between model calls, so a worker inside one long tool call (or a
+    hung provider request) is legitimately silent for longer than the 1 h default; reclaiming
+    it kills in-flight work and respawns the same card forever.
+    """
+    from hermes_cli import config as cfg_mod
+
+    monkeypatch.delenv("HERMES_KANBAN_HEARTBEAT_MAX_STALE_SECONDS", raising=False)
+    monkeypatch.setattr(cfg_mod, "load_config_readonly", lambda: {}, raising=False)
+    assert kb.stale_heartbeat_max_seconds() == kb.DEFAULT_CLAIM_HEARTBEAT_MAX_STALE_SECONDS == 3600
+    assert kbd._stale_heartbeat_gap_seconds() == 3600
+
+    monkeypatch.setattr(
+        cfg_mod,
+        "load_config_readonly",
+        lambda: {"kanban": {"heartbeat_max_stale_seconds": 21600}},
+        raising=False,
+    )
+    assert kb.stale_heartbeat_max_seconds() == 21600
+    assert kbd._stale_heartbeat_gap_seconds() == 21600
+
+    monkeypatch.setenv("HERMES_KANBAN_HEARTBEAT_MAX_STALE_SECONDS", "7200")
+    assert kb.stale_heartbeat_max_seconds() == 7200
+
+    # Garbage in the source falls back to the 1 h default rather than disabling the backstop.
+    monkeypatch.setenv("HERMES_KANBAN_HEARTBEAT_MAX_STALE_SECONDS", "not-a-number")
+    assert kb.stale_heartbeat_max_seconds() == 3600

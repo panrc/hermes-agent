@@ -1959,6 +1959,12 @@ DEFAULT_CONFIG = {
         # Running tasks with no heartbeat (last_heartbeat_at) for this many seconds are reclaimed to
         # ready on the next tick; a still-running local worker is terminated first. 0 = off.
         "dispatch_stale_timeout_seconds": 14400,
+        # Second, independent backstop (see kanban_db.stale_heartbeat_max_seconds): a running card whose
+        # worker PID is still alive but whose last_heartbeat_at is older than this many seconds is
+        # treated as wedged and reclaimed anyway. Heartbeats only advance between model calls, so one
+        # long tool call (backtest/build/download) or a hung provider request can exceed the 1 h
+        # default. Also readable via HERMES_KANBAN_HEARTBEAT_MAX_STALE_SECONDS. 0/absent = 3600.
+        "heartbeat_max_stale_seconds": 3600,
         # Each tick, requeue 'running' cards with broken claim bookkeeping (claim_lock or
         # claim_expires NULL with a dead worker) that TTL/crash/stale recovery can't see. False
         # keeps orphans frozen for manual forensics.
