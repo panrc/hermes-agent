@@ -919,9 +919,13 @@ def _local_host_hints() -> list[str]:
         pass
     # The model reaches for the system temp dir by reflex (tmpfs on most Linux hosts, fills RAM);
     # naming Hermes' scratch dir here is what makes the TMPDIR export a habit rather than a hidden default.
+    # prune=False: naming the directory must not run the idle-entry sweep. That sweep scans every
+    # same-user process's cwd, and a single wedged ``proc_pidinfo`` makes it never return — paying
+    # that on the prompt-build path froze first turns outright (no model call, no heartbeat, session
+    # reclaimed an hour later). The sweep belongs to maintenance, not to answering a turn.
     try:
-        host_lines.append(f"Scratch directory: {get_scratch_dir()} (TMPDIR points here; write temporary files "
-                          "and probes there, never under the system temp dir; entries idle for 24h are pruned)")
+        host_lines.append(f"Scratch directory: {get_scratch_dir(prune=False)} (TMPDIR points here; write temporary "
+                          "files and probes there, never under the system temp dir; entries idle for 24h are pruned)")
     except OSError:
         pass
     if not (sys.platform == "win32" and not is_wsl()):
