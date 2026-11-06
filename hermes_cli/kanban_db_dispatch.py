@@ -139,6 +139,8 @@ class DispatchResult:
     (quota/auth error — also auto-blocked), ``"recent_success"`` (completed run
     within guard window), ``"active_pr"`` (GitHub PR URL in a recent comment)."""
     rate_limited: list[str] = field(default_factory=list)
+    owner_unreachable: list[str] = field(default_factory=list)
+    """Task ids requeued because their worker never reached the gateway owner (host condition)."""
     """Task ids whose workers bailed on a provider rate-limit / quota wall
     (EX_TEMPFAIL sentinel exit) and were released to ``ready`` WITHOUT counting
     a failure — a long quota window must never trip the circuit breaker."""
@@ -251,6 +253,8 @@ def _exit_code_kind(code: int) -> tuple[str, int]:
         return ("rate_limited", code)
     if code == _kb.KANBAN_TERMINAL_PROVIDER_EXIT_CODE:
         return ("terminal_provider", code)
+    if code == _kb.KANBAN_OWNER_UNREACHABLE_EXIT_CODE:
+        return ("owner_unreachable", code)
     return ("nonzero_exit", code)
 
 
@@ -1047,6 +1051,9 @@ class _DeadWorker:
     protocol_violation: bool = False
     rate_limited: bool = False
     terminal_provider: bool = False
+    owner_unreachable: bool = False
+    """``KANBAN_OWNER_UNREACHABLE_EXIT_CODE``: the worker could not reach its gateway owner — a
+    host condition, released WITHOUT counting a failure."""
     """``KANBAN_TERMINAL_PROVIDER_EXIT_CODE``: the provider rejected the worker's
     credential/model — trips the breaker on this first occurrence."""
 
@@ -1054,7 +1061,11 @@ class _DeadWorker:
     def run_outcome(self) -> str:
         # A rate-limited requeue is recorded as ``rate_limited`` so board history
         # doesn't show a phantom crash for a quota wall.
-        return "rate_limited" if self.rate_limited else "crashed"
+        if self.rate_limited:
+            return "rate_limited"
+        if self.owner_unreachable:
+            return "owner_unreachable"
+        return "crashed"
 
 
 def _classify_dead_worker(
@@ -1121,6 +1132,17 @@ def _classify_dead_worker_exit(
             "rate_limited",
             {"pid": pid, "claimer": claimer, "exit_code": code},
             rate_limited=True,
+        )
+    if kind == "owner_unreachable":
+        # The worker never reached its gateway owner (owner restarting / wedged / unreachable for
+        # the whole wait). Host condition, not the task's fault: requeue and do NOT count a
+        # failure, or one bad night parks every card blocked.
+        return _DeadWorker(
+            kind, code,
+            f"pid {pid} could not reach the gateway owner (exit {code}) — requeued without counting a failure",
+            "requeued",
+            {"pid": pid, "claimer": claimer, "exit_kind": kind, "exit_code": code, "owner_unreachable": True},
+            owner_unreachable=True,
         )
     if kind == "terminal_provider":
         # The worker classified its own provider failure as unhealable (credential
@@ -1221,7 +1243,7 @@ def _reclaim_dead_workers(conn: sqlite3.Connection, board: Optional[str] = None)
                 "outcome": dead.run_outcome,
                 "retry_status": retry_status,
             })
-            if dead.rate_limited or dead.protocol_violation:
+            if dead.rate_limited or dead.protocol_violation or dead.owner_unreachable:
                 # Stamp last_failure_error WITHOUT touching ``consecutive_failures``:
                 # a rate-limited requeue must show ``check_respawn_guard`` a quota
                 # blocker; a below-budget protocol violation never reaches
@@ -1231,7 +1253,10 @@ def _reclaim_dead_workers(conn: sqlite3.Connection, board: Optional[str] = None)
                     "UPDATE tasks SET last_failure_error = ? WHERE id = ?",
                     (dead.error_text[:500], row["id"]),
                 )
-            if dead.rate_limited:
+            if dead.owner_unreachable:
+                # Neutral requeue: the owner (gateway) was unreachable, the task did nothing wrong.
+                sweep.owner_unreachable.append(row["id"])
+            elif dead.rate_limited:
                 sweep.rate_limited.append(row["id"])
             else:
                 sweep.crashed.append(row["id"])

@@ -21,7 +21,10 @@ from typing import Optional
 # again is safe: ``kanban.run`` is idempotent per attempt and ``prompt.receipt`` is a read.
 # ``OWNER_WAIT_S`` is the longest the owner may stay silent between answers before the worker
 # gives up (the first ``kanban.run`` answer has its own wait, ``admission_answer_budget``).
-OWNER_WAIT_S = 180.0
+# 2026-11-06：夜间网络/owner 抖动常常超过 3 分钟，180s 让整批 worker 同时放弃并把卡片
+# 烧到 blocked。放宽到 15 分钟；这期间的退出记 KANBAN_OWNER_UNREACHABLE_EXIT_CODE，
+# 不计入任务的失败额度。
+OWNER_WAIT_S = 900.0
 _TRANSIENT_OWNER_STATES = frozenset({'draining', 'starting'})
 # In-band owner refusals that leave the attempt intact: a draining owner admits nothing new, and a
 # retired authority's successor holds the admission the next connection reads.
@@ -160,6 +163,18 @@ async def _receipt(client, claim):
     return await client.rpc('prompt.receipt', session_id=claim.session_id, admission_id=claim.admission_id)
 
 
+def _owner_unreachable(exc: BaseException) -> bool:
+    """True for "we never got to talk to the owner": a host condition, not a task failure."""
+    from hermes_cli.gateway_client import GatewayClientError, GatewayUnavailableError
+    if isinstance(exc, GatewayUnavailableError):
+        return True
+    if not isinstance(exc, GatewayClientError):
+        return False
+    text = str(exc)
+    return ('no local fallback' in text or 'owner silent for' in text
+            or 'Gateway inaccessible' in text or 'Gateway disconnected' in text)
+
+
 def main():
     # The dead-worker sweep books this process's exit from the trailer in its log (it never
     # reaps us), so every exit path writes it — the same contract as a quiet one-shot worker.
@@ -167,6 +182,13 @@ def main():
     rc = 1
     try:
         rc = _submit()
+    except BaseException as exc:          # noqa: BLE001 — classified here, re-raised otherwise
+        if not _owner_unreachable(exc):
+            raise
+        # The owner (gateway) was unreachable: requeue without spending the task's failure budget.
+        from hermes_cli.kanban_db import KANBAN_OWNER_UNREACHABLE_EXIT_CODE
+        print(f'Kanban owner unreachable: {exc}', file=sys.stderr, flush=True)
+        rc = KANBAN_OWNER_UNREACHABLE_EXIT_CODE
     finally:
         print(f'\n{KANBAN_WORKER_EXIT_TRAILER}{int(rc)}', file=sys.stderr, flush=True)
     return rc

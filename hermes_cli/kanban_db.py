@@ -314,6 +314,12 @@ KANBAN_RATE_LIMIT_EXIT_CODE = 75
 # the FIRST occurrence instead of spending ``failure_limit`` identical spawns. 78 == BSD EX_CONFIG.
 KANBAN_TERMINAL_PROVIDER_EXIT_CODE = 78
 
+# Worker exit "could not reach the gateway owner": a host condition (the owner was restarting,
+# wedged, or unreachable for the whole wait), not the task's fault. Released WITHOUT counting a
+# failure — otherwise a single bad night of network/owner churn burns the card's budget and parks
+# it blocked. 69 == BSD EX_UNAVAILABLE.
+KANBAN_OWNER_UNREACHABLE_EXIT_CODE = 69
+
 
 def _resolve_crash_grace_seconds() -> int:
     """``HERMES_KANBAN_CRASH_GRACE_SECONDS`` (0 = immediate, for tests) else default."""
